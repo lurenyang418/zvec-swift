@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:zvec-swift}",
+            "name": "Debug zvec-example",
+            "target": "zvec-example",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug zvec-example"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:zvec-swift}",
+            "name": "Release zvec-example",
+            "target": "zvec-example",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release zvec-example"
+        }
+    ]
+}

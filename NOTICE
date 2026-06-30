@@ -1,0 +1,9 @@
+Zvec Swift
+Copyright 2026 zvec-swift contributors
+
+This product includes software developed by Alibaba Group and contributors to
+the Zvec project (https://github.com/alibaba/zvec), licensed under the Apache
+License 2.0. Native release artifacts include Zvec's third-party dependencies;
+their license and notice files are preserved in the corresponding source tree
+and release archive.
+

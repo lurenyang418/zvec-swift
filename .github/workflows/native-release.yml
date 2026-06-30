@@ -1,0 +1,33 @@
+name: Native release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build all Apple slices
+        run: scripts/build-xcframework.sh all
+      - name: Package and checksum
+        run: scripts/package-native.sh | tee Artifacts/checksum.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CZvec-native
+          path: |
+            Artifacts/CZvec.xcframework.zip
+            Artifacts/checksum.txt
+      - name: Publish native-v0.5.1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create native-v0.5.1
+          Artifacts/CZvec.xcframework.zip
+          Artifacts/checksum.txt
+          --title "Zvec native v0.5.1"
+          --notes "Prebuilt CZvec XCFramework for macOS arm64, iOS arm64, and iOS Simulator arm64."
+
