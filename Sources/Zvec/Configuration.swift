@@ -42,6 +42,17 @@ public struct Configuration: Sendable, Equatable {
     }
 }
 
+extension Configuration {
+    func validate() throws(ZvecError) {
+        if let queryThreadCount, queryThreadCount == 0 {
+            throw .invalid("queryThreadCount must be greater than zero")
+        }
+        if let optimizeThreadCount, optimizeThreadCount == 0 {
+            throw .invalid("optimizeThreadCount must be greater than zero")
+        }
+    }
+}
+
 public struct CollectionOptions: Sendable, Equatable {
     public var enableMemoryMapping: Bool
     public var maximumBufferSize: Int?

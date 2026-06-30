@@ -60,6 +60,28 @@ import Testing
     }
 }
 
+@Test func rejectsInvalidNativeIntegerRanges() throws {
+    #expect(throws: ZvecError.self) {
+        _ = try CAPI.int32(Int.max, named: "topK")
+    }
+    #expect(throws: ZvecError.self) {
+        _ = try CAPI.int32(Int.min, named: "topK")
+    }
+    #expect(throws: ZvecError.self) {
+        _ = try CAPI.int32(UInt32.max, named: "rankConstant")
+    }
+    #expect(try CAPI.int32(Int(Int32.max), named: "topK") == Int32.max)
+}
+
+@Test func rejectsZeroThreadCountsBeforeCallingNative() {
+    #expect(throws: ZvecError.self) {
+        try Configuration(queryThreadCount: 0).validate()
+    }
+    #expect(throws: ZvecError.self) {
+        try Configuration(optimizeThreadCount: 0).validate()
+    }
+}
+
 @Test func documentNativeUtilitiesRoundTrip() throws {
     let schema = try CollectionSchema("serialization") {
         try Field("title", type: .string)

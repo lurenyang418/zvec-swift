@@ -50,11 +50,25 @@ enum CAPI {
         case ZVEC_ERROR_UNAVAILABLE: .unavailable
         case ZVEC_ERROR_INTERNAL_ERROR: .internalError
         case ZVEC_ERROR_NOT_SUPPORTED: .notSupported
-        default: .unknown(Int32(status.rawValue))
+        default: .unknown(Int32(bitPattern: status.rawValue))
         }
     }
 
     static func string(_ pointer: UnsafePointer<CChar>?) -> String? {
         pointer.map(String.init(cString:))
+    }
+
+    static func int32(_ value: Int, named name: String) throws(ZvecError) -> Int32 {
+        guard let result = Int32(exactly: value) else {
+            throw .invalid("\(name) must fit in a signed 32-bit integer")
+        }
+        return result
+    }
+
+    static func int32(_ value: UInt32, named name: String) throws(ZvecError) -> Int32 {
+        guard let result = Int32(exactly: value) else {
+            throw .invalid("\(name) must fit in a signed 32-bit integer")
+        }
+        return result
     }
 }

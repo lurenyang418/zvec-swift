@@ -119,12 +119,17 @@ final class NativeIndexConfiguration {
             switch configuration {
             case let .hnsw(metric, quantization, m, efConstruction):
                 try setVector(metric: metric, quantization: quantization)
-                try CAPI.check(zvec_index_params_set_hnsw_params(handle, Int32(m), Int32(efConstruction)))
+                try CAPI.check(
+                    zvec_index_params_set_hnsw_params(
+                        handle, CAPI.int32(m, named: "m"),
+                        CAPI.int32(efConstruction, named: "efConstruction")
+                    ))
             case let .ivf(metric, quantization, listCount, iterations, useSOAR):
                 try setVector(metric: metric, quantization: quantization)
                 try CAPI.check(
                     zvec_index_params_set_ivf_params(
-                        handle, Int32(listCount), Int32(iterations), useSOAR
+                        handle, CAPI.int32(listCount, named: "listCount"),
+                        CAPI.int32(iterations, named: "iterations"), useSOAR
                     ))
             case let .flat(metric, quantization):
                 try setVector(metric: metric, quantization: quantization)
@@ -135,7 +140,8 @@ final class NativeIndexConfiguration {
                     try setVector(metric: metric, quantization: .none)
                     try CAPI.check(
                         zvec_index_params_set_vamana_params(
-                            handle, Int32(maxDegree), Int32(buildListSize), alpha, false, false
+                            handle, CAPI.int32(maxDegree, named: "maxDegree"),
+                            CAPI.int32(buildListSize, named: "buildListSize"), alpha, false, false
                         ))
                 #endif
             case let .inverted(range, wildcard):

@@ -20,3 +20,10 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 - Reject indexed sparse-vector fields on Apple before upstream Zvec v0.5.1 can
   abort; sparse brute-force queries remain supported.
+
+### Fixed
+
+- Preserve IVF and Flat radius/linear-search parameters on multi-query subqueries.
+- Reject native 32-bit integer overflows and zero runtime thread counts instead
+  of allowing traps or deferring validation to CZvec.
+- Handle C-string allocation failures without passing null pointers to CZvec.

@@ -68,7 +68,8 @@ final class NativeDocument {
         return Document(
             id: id,
             fields: fields,
-            operation: DocumentOperation(rawValue: Int32(zvec_doc_get_operator(handle).rawValue)) ?? .insert,
+            operation: DocumentOperation(rawValue: Int32(bitPattern: zvec_doc_get_operator(handle).rawValue))
+                ?? .insert,
             documentID: zvec_doc_get_doc_id(handle),
             score: zvec_doc_get_score(handle)
         )

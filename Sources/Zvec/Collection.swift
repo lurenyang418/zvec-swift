@@ -598,18 +598,3 @@ public final class Collection: @unchecked Sendable {
         return try result.get()
     }
 }
-
-extension Array where Element == String {
-    fileprivate func withCStringArray<Result>(
-        _ body: (UnsafeMutablePointer<UnsafePointer<CChar>?>?) throws -> Result
-    ) throws -> Result {
-        let storage: [UnsafeMutablePointer<CChar>?] = map { strdup($0) }
-        defer { storage.forEach { if let pointer = $0 { free(pointer) } } }
-        var pointers: [UnsafePointer<CChar>?] = storage.map { pointer in
-            pointer.map { UnsafePointer<CChar>($0) }
-        }
-        return try pointers.withUnsafeMutableBufferPointer {
-            try body($0.baseAddress)
-        }
-    }
-}

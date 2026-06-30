@@ -105,6 +105,7 @@ private struct NativeConfiguration: ~Copyable {
             handle = nil
             return
         }
+        try configuration.validate()
         guard let handle = zvec_config_data_create() else {
             throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
         }
