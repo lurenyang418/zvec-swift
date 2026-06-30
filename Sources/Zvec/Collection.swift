@@ -204,6 +204,31 @@ public final class Collection: @unchecked Sendable {
         }
     }
 
+    public func query(_ query: GroupByVectorQuery) throws(ZvecError) -> [GroupResult] {
+        try read { handle in
+            let native = try NativeGroupByQuery(query)
+            var results: UnsafeMutablePointer<zvec_swift_group_result_t>?
+            var count = 0
+            try CAPI.check(zvec_swift_collection_group_by_query(
+                handle, native.handle, &results, &count
+            ))
+            guard let results else { return [] }
+            defer { zvec_swift_group_results_free(results, count) }
+            return try (0..<count).map { index in
+                let result = results[index]
+                let documents: [Document] = try (0..<result.document_count).compactMap { documentIndex -> Document? in
+                    guard let handle = result.documents?[documentIndex] else { return nil }
+                    // The shim owns these native documents until the result array is freed.
+                    return try NativeDocument.borrowing(handle).value(schema: cachedSchema)
+                }
+                return GroupResult(
+                    value: CAPI.string(result.group_value) ?? "",
+                    documents: documents
+                )
+            }
+        }
+    }
+
     public func createIndex(_ index: IndexConfiguration, for field: String) throws(ZvecError) {
         try write { handle in
             let native = try NativeIndexConfiguration(index)
@@ -305,6 +330,9 @@ public final class Collection: @unchecked Sendable {
         try await asyncRead { try $0.query(query) }
     }
     public func query(_ query: MultiQuery) async throws(ZvecError) -> [Document] {
+        try await asyncRead { try $0.query(query) }
+    }
+    public func query(_ query: GroupByVectorQuery) async throws(ZvecError) -> [GroupResult] {
         try await asyncRead { try $0.query(query) }
     }
     public func close() async throws(ZvecError) { try await asyncWrite { try $0.close() } }

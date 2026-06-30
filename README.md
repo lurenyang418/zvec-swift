@@ -77,9 +77,13 @@ scripts/build-xcframework.sh
 swift test
 ```
 
+The build pins the exact upstream commit and compiles a narrowly scoped
+[native compatibility shim](Native/README.md) for C API gaps in Zvec v0.5.1.
+Use `scripts/build-xcframework.sh all` to create macOS, iOS device, and iOS
+simulator slices.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete workflow and [upstream build documentation](https://zvec.org/en/docs/build/) for Zvec internals.
 
 ## License
 
 Apache License 2.0. Zvec and bundled third-party components retain their respective notices; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
-

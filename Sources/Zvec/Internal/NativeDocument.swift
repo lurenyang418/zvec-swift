@@ -3,12 +3,14 @@ import Foundation
 
 final class NativeDocument {
     let handle: OpaquePointer
+    private let ownsHandle: Bool
 
     init(_ document: Document) throws {
         guard let handle = zvec_doc_create() else {
             throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
         }
         self.handle = handle
+        self.ownsHandle = true
         do {
             document.id.withCString { zvec_doc_set_pk(handle, $0) }
             if let documentID = document.documentID { zvec_doc_set_doc_id(handle, documentID) }
@@ -25,6 +27,16 @@ final class NativeDocument {
 
     init(taking handle: OpaquePointer) {
         self.handle = handle
+        self.ownsHandle = true
+    }
+
+    private init(borrowing handle: OpaquePointer) {
+        self.handle = handle
+        self.ownsHandle = false
+    }
+
+    static func borrowing(_ handle: OpaquePointer) -> NativeDocument {
+        NativeDocument(borrowing: handle)
     }
 
     func value(schema: CollectionSchema) throws -> Document {
@@ -208,13 +220,15 @@ final class NativeDocument {
             let pair: (indices: [UInt32], values: [Float]) = try data.sparse()
             return .sparseVectorFloat32(try SparseVector(indices: pair.indices, values: pair.values))
         case .arrayBinary:
-            // Upstream v0.5.1 flattens binary array elements when reading.
-            return .arrayBinary([data])
+            return .arrayBinary(try copyBinaryArray(field.name, from: document))
         case .arrayString:
             let values = data.split(separator: 0, omittingEmptySubsequences: false)
             return .arrayString(values.dropLast().map { String(decoding: $0, as: UTF8.self) })
         case .arrayBool:
-            return .arrayBool(data.flatMap { byte in (0..<8).map { byte & (1 << $0) != 0 } })
+            let count = try arrayCount(field.name, type: field.dataType, from: document)
+            return .arrayBool(Array(data.flatMap { byte in
+                (0..<8).map { byte & (1 << $0) != 0 }
+            }.prefix(count)))
         case .arrayInt32: return .arrayInt32(data.array(of: Int32.self))
         case .arrayInt64: return .arrayInt64(data.array(of: Int64.self))
         case .arrayUInt32: return .arrayUInt32(data.array(of: UInt32.self))
@@ -240,7 +254,35 @@ final class NativeDocument {
         return Data(bytes: pointer, count: count)
     }
 
-    deinit { zvec_doc_destroy(handle) }
+    private static func arrayCount(
+        _ name: String, type: DataType, from document: OpaquePointer
+    ) throws -> Int {
+        var count = 0
+        try name.withCString {
+            try CAPI.check(zvec_swift_doc_array_count(document, $0, type.rawValue, &count))
+        }
+        return count
+    }
+
+    private static func copyBinaryArray(
+        _ name: String, from document: OpaquePointer
+    ) throws -> [Data] {
+        let count = try arrayCount(name, type: .arrayBinary, from: document)
+        return try (0..<count).map { index in
+            var pointer: UnsafeMutablePointer<UInt8>?
+            var size = 0
+            try name.withCString {
+                try CAPI.check(zvec_swift_doc_binary_array_element_copy(
+                    document, $0, index, &pointer, &size
+                ))
+            }
+            guard let pointer else { return Data() }
+            defer { zvec_free(pointer) }
+            return Data(bytes: pointer, count: size)
+        }
+    }
+
+    deinit { if ownsHandle { zvec_doc_destroy(handle) } }
 }
 
 private extension Data {

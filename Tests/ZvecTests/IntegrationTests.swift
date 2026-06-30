@@ -57,7 +57,7 @@ struct IntegrationTests {
         defer { try? ZvecRuntime.shutdown() }
 
         let schema = try CollectionSchema("async") {
-            try VectorField("embedding", type: .float32, dimensions: 2, index: .flat())
+            try VectorField("embedding", type: .float32, dimensions: 2, index: .hnsw())
         }
         let path = FileManager.default.temporaryDirectory
             .appending(path: "zvec-swift-async-\(UUID().uuidString)")
@@ -71,5 +71,68 @@ struct IntegrationTests {
         let values = try await collection.fetch(ids: ["one"], includeVector: true)
         #expect(values.count == 1)
         try await collection.close()
+    }
+
+    @Test func arrayRoundTripAndGroupByQuery() throws {
+        try ZvecRuntime.initialize()
+        defer { try? ZvecRuntime.shutdown() }
+
+        let schema = try CollectionSchema("arrays-and-groups") {
+            try Field("category", type: .string, index: .inverted())
+            try Field("flags", type: .arrayBool)
+            try Field("blobs", type: .arrayBinary)
+            try VectorField("embedding", type: .float32, dimensions: 2, index: .flat())
+        }
+        let path = FileManager.default.temporaryDirectory
+            .appending(path: "zvec-swift-group-\(UUID().uuidString)")
+        let collection = try Collection.create(at: path, schema: schema)
+        defer {
+            try? collection.destroy()
+            try? FileManager.default.removeItem(at: path)
+        }
+
+        let firstBlobs = [Data([0, 1, 2]), Data(), Data([255, 7])]
+        let summary = try collection.insert([
+            Document(id: "one", fields: [
+                "category": .string("a"),
+                "flags": .arrayBool([true, false, true, true, false]),
+                "blobs": .arrayBinary(firstBlobs),
+                "embedding": .vectorFloat32([1, 0]),
+            ]),
+            Document(id: "two", fields: [
+                "category": .string("a"),
+                "flags": .arrayBool([false, true]),
+                "blobs": .arrayBinary([Data([9])]),
+                "embedding": .vectorFloat32([0.9, 0.1]),
+            ]),
+            Document(id: "three", fields: [
+                "category": .string("b"),
+                "flags": .arrayBool([]),
+                "blobs": .arrayBinary([]),
+                "embedding": .vectorFloat32([0, 1]),
+            ]),
+        ])
+        #expect(summary.failed == 0)
+
+        let fetched = try collection.fetch(ids: ["one"], outputFields: ["category", "flags", "blobs"])
+        #expect(fetched.first?["category"] == .string("a"))
+        #expect(fetched.first?["flags"] == .arrayBool([true, false, true, true, false]))
+        #expect(fetched.first?["blobs"] == .arrayBinary(firstBlobs))
+
+        try collection.flush()
+        try collection.optimize()
+        let groups = try collection.query(GroupByVectorQuery(
+            vectorQuery: VectorQuery(
+                field: "embedding",
+                vector: .float32([1, 0]),
+                topK: 3,
+                outputFields: ["category"]
+            ),
+            groupByField: "category",
+            groupCount: 2,
+            groupTopK: 2
+        ))
+        #expect(Set(groups.map(\.value)) == Set(["a", "b"]))
+        #expect(groups.first(where: { $0.value == "a" })?.documents.count == 2)
     }
 }

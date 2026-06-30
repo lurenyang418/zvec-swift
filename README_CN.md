@@ -30,6 +30,10 @@
 
 快速示例和开发命令参见 [英文 README](README.md)，完整设计约束参见 [plan.md](plan.md)，贡献流程参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
+原生构建固定到明确的上游 commit，并包含一个范围受限的
+[C++ 兼容层](Native/README.md)，用于补齐 Zvec v0.5.1 C API 的数组读取与
+group-by 执行缺口。
+
 ## 相关链接
 
 - [Zvec 官方仓库](https://github.com/alibaba/zvec)
@@ -41,4 +45,3 @@
 ## 许可证
 
 Apache License 2.0。详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
-

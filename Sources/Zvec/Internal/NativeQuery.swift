@@ -48,6 +48,56 @@ final class NativeVectorQuery {
     deinit { zvec_vector_query_destroy(handle) }
 }
 
+final class NativeGroupByQuery {
+    let handle: OpaquePointer
+
+    init(_ query: GroupByVectorQuery) throws {
+        guard let handle = zvec_group_by_vector_query_create() else {
+            throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
+        }
+        self.handle = handle
+        do {
+            let vector = query.vectorQuery
+            guard vector.topK > 0 else { throw ZvecError.invalid("topK must be positive") }
+            guard query.groupCount > 0 else { throw ZvecError.invalid("groupCount must be positive") }
+            guard query.groupTopK > 0 else { throw ZvecError.invalid("groupTopK must be positive") }
+            guard vector.fullText == nil else {
+                throw ZvecError(code: .notSupported, message: "Group-by queries do not support full-text matching in Zvec 0.5.1")
+            }
+            try vector.field.withCString {
+                try CAPI.check(zvec_group_by_vector_query_set_field_name(handle, $0))
+            }
+            try query.groupByField.withCString {
+                try CAPI.check(zvec_group_by_vector_query_set_group_by_field_name(handle, $0))
+            }
+            try CAPI.check(zvec_group_by_vector_query_set_group_count(handle, query.groupCount))
+            try CAPI.check(zvec_group_by_vector_query_set_group_topk(handle, query.groupTopK))
+            try vector.vector.withUnsafeBytes {
+                try CAPI.check(zvec_group_by_vector_query_set_query_vector(handle, $0.baseAddress, $0.count))
+            }
+            if let filter = vector.filter {
+                try filter.withCString {
+                    try CAPI.check(zvec_group_by_vector_query_set_filter(handle, $0))
+                }
+            }
+            try CAPI.check(zvec_group_by_vector_query_set_include_vector(handle, vector.includeVector))
+            try vector.outputFields.withCStringArray {
+                try CAPI.check(zvec_group_by_vector_query_set_output_fields(
+                    handle, $0, vector.outputFields.count
+                ))
+            }
+            if let parameters = vector.indexParameters {
+                try NativeQueryParameters.attach(parameters, toGroupByQuery: handle)
+            }
+        } catch {
+            zvec_group_by_vector_query_destroy(handle)
+            throw error
+        }
+    }
+
+    deinit { zvec_group_by_vector_query_destroy(handle) }
+}
+
 final class NativeFTS {
     let handle: OpaquePointer
 
@@ -215,6 +265,38 @@ enum NativeQueryParameters {
                 throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT)
             }
             let status = zvec_sub_query_set_flat_params(query, native)
+            if status != ZVEC_OK { zvec_query_params_flat_destroy(native) }
+            try CAPI.check(status)
+        case .vamana:
+            throw ZvecError(code: .notSupported, message: "Vamana/DiskANN is not supported on Apple platforms")
+        }
+    }
+
+    static func attach(_ value: IndexQueryParameters, toGroupByQuery query: OpaquePointer) throws {
+        switch value {
+        case let .hnsw(value):
+            guard let native = zvec_query_params_hnsw_create(
+                Int32(value.efSearch), value.radius ?? 0, value.linearSearch, value.useRefiner
+            ) else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
+            let status = zvec_group_by_vector_query_set_hnsw_params(query, native)
+            if status != ZVEC_OK { zvec_query_params_hnsw_destroy(native) }
+            try CAPI.check(status)
+        case let .ivf(value):
+            guard let native = zvec_query_params_ivf_create(
+                Int32(value.probeCount), value.useRefiner, value.scaleFactor
+            ) else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
+            if let radius = value.radius { try CAPI.check(zvec_query_params_ivf_set_radius(native, radius)) }
+            try CAPI.check(zvec_query_params_ivf_set_is_linear(native, value.linearSearch))
+            let status = zvec_group_by_vector_query_set_ivf_params(query, native)
+            if status != ZVEC_OK { zvec_query_params_ivf_destroy(native) }
+            try CAPI.check(status)
+        case let .flat(value):
+            guard let native = zvec_query_params_flat_create(value.useRefiner, value.scaleFactor) else {
+                throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT)
+            }
+            if let radius = value.radius { try CAPI.check(zvec_query_params_flat_set_radius(native, radius)) }
+            try CAPI.check(zvec_query_params_flat_set_is_linear(native, value.linearSearch))
+            let status = zvec_group_by_vector_query_set_flat_params(query, native)
             if status != ZVEC_OK { zvec_query_params_flat_destroy(native) }
             try CAPI.check(status)
         case .vamana:

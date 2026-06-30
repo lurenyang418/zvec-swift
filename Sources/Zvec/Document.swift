@@ -49,3 +49,12 @@ public struct DocumentWriteResult: Sendable, Equatable {
     }
 }
 
+public struct GroupResult: Sendable, Equatable {
+    public let value: String
+    public let documents: [Document]
+
+    public init(value: String, documents: [Document]) {
+        self.value = value
+        self.documents = documents
+    }
+}

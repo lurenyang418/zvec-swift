@@ -1,0 +1,10 @@
+diff --git a/src/binding/c/CMakeLists.txt b/src/binding/c/CMakeLists.txt
+index ef19fb3..e7b1628 100644
+--- a/src/binding/c/CMakeLists.txt
++++ b/src/binding/c/CMakeLists.txt
+@@ -59,6 +59,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
+ # C API library source files
+ set(ZVEC_C_API_SOURCES
+     c_api.cc
++    zvec_swift_shim.cc
+ )

@@ -26,6 +26,11 @@ fi
 git -C "$SOURCE_ROOT" fetch --tags origin
 git -C "$SOURCE_ROOT" checkout --detach "$ZVEC_COMMIT"
 git -C "$SOURCE_ROOT" submodule update --init --recursive
+cp "$ROOT/Native/zvec_swift_shim.cc" "$SOURCE_ROOT/src/binding/c/"
+cp "$ROOT/Native/zvec_swift_shim.h" "$SOURCE_ROOT/src/include/zvec/"
+if ! grep -q zvec_swift_shim.cc "$SOURCE_ROOT/src/binding/c/CMakeLists.txt"; then
+  git -C "$SOURCE_ROOT" apply "$ROOT/Native/zvec-cmake-shim.patch"
+fi
 
 if [[ ! -x "$HOST_ROOT/bin/protoc" ]]; then
   cmake -S "$SOURCE_ROOT" -B "$HOST_ROOT" \
@@ -85,13 +90,15 @@ make_framework() {
   [[ -n "$dylib" ]] || { echo "zvec C API library not found" >&2; exit 1; }
 
   rm -rf "$framework"
-  mkdir -p "$framework/Headers" "$framework/Modules"
+  mkdir -p "$framework/Headers/zvec" "$framework/Modules"
   cp "$dylib" "$framework/CZvec"
-  cp "$build/src/generated/zvec/c_api.h" "$framework/Headers/c_api.h"
+  cp "$build/src/generated/zvec/c_api.h" "$framework/Headers/zvec/c_api.h"
+  cp "$SOURCE_ROOT/src/include/zvec/zvec_swift_shim.h" "$framework/Headers/zvec/"
   install_name_tool -id @rpath/CZvec.framework/CZvec "$framework/CZvec"
 
   printf '%s\n' 'framework module CZvec {' \
-    '  umbrella header "c_api.h"' \
+    '  umbrella header "zvec/c_api.h"' \
+    '  header "zvec/zvec_swift_shim.h"' \
     '  export *' \
     '  module * { export * }' \
     '}' > "$framework/Modules/module.modulemap"
