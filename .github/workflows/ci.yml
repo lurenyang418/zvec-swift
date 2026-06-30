@@ -13,12 +13,33 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      - name: Check formatting
+        run: xcrun swift-format lint --recursive --strict --configuration .swift-format Sources Tests Package.swift
+      - name: Lint
+        run: swiftlint lint --config .swiftlint.yml
       - name: Restore native artifact
-        run: scripts/build-xcframework.sh macos
+        run: scripts/build-xcframework.sh all
+      - name: Verify XCFramework
+        run: scripts/verify-xcframework.sh
       - name: Test
         run: swift test --parallel
       - name: Release build
         run: swift build -c release
+      - name: Build DocC
+        run: scripts/generate-docs.sh
+      - name: Build iOS Simulator module
+        run: >-
+          swift build --target Zvec
+          --triple arm64-apple-ios16.0-simulator
+          --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          --scratch-path /tmp/zvec-swift-ios-simulator-build
+      - name: Build iOS device module
+        run: >-
+          swift build --target Zvec
+          --triple arm64-apple-ios16.0
+          --sdk "$(xcrun --sdk iphoneos --show-sdk-path)"
+          --scratch-path /tmp/zvec-swift-ios-device-build
       - name: Validate diff
         run: git diff --check
-

@@ -28,9 +28,10 @@ public final class Collection: @unchecked Sendable {
             let nativeOptions = try options.map(NativeCollectionOptions.init)
             var handle: OpaquePointer?
             try url.path.withCString {
-                try CAPI.check(zvec_collection_create_and_open(
-                    $0, nativeSchema.handle, nativeOptions?.handle, &handle
-                ))
+                try CAPI.check(
+                    zvec_collection_create_and_open(
+                        $0, nativeSchema.handle, nativeOptions?.handle, &handle
+                    ))
             }
             guard let handle else { throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR) }
             return Collection(handle: handle, schema: schema)
@@ -57,6 +58,21 @@ public final class Collection: @unchecked Sendable {
                 throw error
             }
         }
+    }
+
+    public static func create(
+        at url: URL,
+        schema: CollectionSchema,
+        options: CollectionOptions? = nil
+    ) async throws(ZvecError) -> Collection {
+        try await runAsync { try create(at: url, schema: schema, options: options) }
+    }
+
+    public static func open(
+        at url: URL,
+        options: CollectionOptions? = nil
+    ) async throws(ZvecError) -> Collection {
+        try await runAsync { try open(at: url, options: options) }
     }
 
     public var schema: CollectionSchema {
@@ -99,6 +115,21 @@ public final class Collection: @unchecked Sendable {
         }
     }
 
+    public func options() throws(ZvecError) -> CollectionOptions {
+        try read { handle in
+            var native: OpaquePointer?
+            try CAPI.check(zvec_collection_get_options(handle, &native))
+            guard let native else { throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR) }
+            defer { zvec_collection_options_destroy(native) }
+            let maximumBufferSize = zvec_collection_options_get_max_buffer_size(native)
+            return CollectionOptions(
+                enableMemoryMapping: zvec_collection_options_get_enable_mmap(native),
+                maximumBufferSize: maximumBufferSize == 0 ? nil : maximumBufferSize,
+                readOnly: zvec_collection_options_get_read_only(native)
+            )
+        }
+    }
+
     @discardableResult
     public func insert(_ documents: [Document]) throws(ZvecError) -> WriteSummary {
         try writeDocuments(documents, operation: zvec_collection_insert)
@@ -133,9 +164,10 @@ public final class Collection: @unchecked Sendable {
             var succeeded = 0
             var failed = 0
             try ids.withCStringArray { pointers in
-                try CAPI.check(zvec_collection_delete(
-                    handle, pointers, ids.count, &succeeded, &failed
-                ))
+                try CAPI.check(
+                    zvec_collection_delete(
+                        handle, pointers, ids.count, &succeeded, &failed
+                    ))
             }
             return WriteSummary(succeeded: succeeded, failed: failed)
         }
@@ -147,9 +179,10 @@ public final class Collection: @unchecked Sendable {
             var results: UnsafeMutablePointer<zvec_write_result_t>?
             var count = 0
             try ids.withCStringArray { pointers in
-                try CAPI.check(zvec_collection_delete_with_results(
-                    handle, pointers, ids.count, &results, &count
-                ))
+                try CAPI.check(
+                    zvec_collection_delete_with_results(
+                        handle, pointers, ids.count, &results, &count
+                    ))
             }
             defer { if let results { zvec_write_results_free(results, count) } }
             return Self.decodeWriteResults(ids: ids, native: results, count: count)
@@ -174,10 +207,11 @@ public final class Collection: @unchecked Sendable {
             var count = 0
             try ids.withCStringArray { idPointers in
                 try outputFields.withCStringArray { fields in
-                    try CAPI.check(zvec_collection_fetch(
-                        handle, idPointers, idCount,
-                        fields, outputFields.count, includeVector, &documents, &count
-                    ))
+                    try CAPI.check(
+                        zvec_collection_fetch(
+                            handle, idPointers, idCount,
+                            fields, outputFields.count, includeVector, &documents, &count
+                        ))
                 }
             }
             return try Self.decodeDocuments(documents, count: count, schema: cachedSchema)
@@ -187,6 +221,16 @@ public final class Collection: @unchecked Sendable {
     public func query(_ query: VectorQuery) throws(ZvecError) -> [Document] {
         try read { handle in
             let native = try NativeVectorQuery(query)
+            var documents: UnsafeMutablePointer<OpaquePointer?>?
+            var count = 0
+            try CAPI.check(zvec_collection_query(handle, native.handle, &documents, &count))
+            return try Self.decodeDocuments(documents, count: count, schema: cachedSchema)
+        }
+    }
+
+    public func query(_ query: FullTextQuery) throws(ZvecError) -> [Document] {
+        try read { handle in
+            let native = try NativeFullTextQuery(query)
             var documents: UnsafeMutablePointer<OpaquePointer?>?
             var count = 0
             try CAPI.check(zvec_collection_query(handle, native.handle, &documents, &count))
@@ -209,9 +253,10 @@ public final class Collection: @unchecked Sendable {
             let native = try NativeGroupByQuery(query)
             var results: UnsafeMutablePointer<zvec_swift_group_result_t>?
             var count = 0
-            try CAPI.check(zvec_swift_collection_group_by_query(
-                handle, native.handle, &results, &count
-            ))
+            try CAPI.check(
+                zvec_swift_collection_group_by_query(
+                    handle, native.handle, &results, &count
+                ))
             guard let results else { return [] }
             defer { zvec_swift_group_results_free(results, count) }
             return try (0..<count).map { index in
@@ -306,8 +351,14 @@ public final class Collection: @unchecked Sendable {
 
     public func flush() async throws(ZvecError) { try await asyncWrite { try $0.flush() } }
     public func optimize() async throws(ZvecError) { try await asyncWrite { try $0.optimize() } }
+    public func refreshSchema() async throws(ZvecError) -> CollectionSchema {
+        try await asyncWrite { try $0.refreshSchema() }
+    }
     public func statistics() async throws(ZvecError) -> CollectionStatistics {
         try await asyncRead { try $0.statistics() }
+    }
+    public func options() async throws(ZvecError) -> CollectionOptions {
+        try await asyncRead { try $0.options() }
     }
     public func insert(_ documents: [Document]) async throws(ZvecError) -> WriteSummary {
         try await asyncWrite { try $0.insert(documents) }
@@ -318,8 +369,23 @@ public final class Collection: @unchecked Sendable {
     public func upsert(_ documents: [Document]) async throws(ZvecError) -> WriteSummary {
         try await asyncWrite { try $0.upsert(documents) }
     }
+    public func insertWithResults(_ documents: [Document]) async throws(ZvecError) -> [DocumentWriteResult] {
+        try await asyncWrite { try $0.insertWithResults(documents) }
+    }
+    public func updateWithResults(_ documents: [Document]) async throws(ZvecError) -> [DocumentWriteResult] {
+        try await asyncWrite { try $0.updateWithResults(documents) }
+    }
+    public func upsertWithResults(_ documents: [Document]) async throws(ZvecError) -> [DocumentWriteResult] {
+        try await asyncWrite { try $0.upsertWithResults(documents) }
+    }
     public func delete(ids: [String]) async throws(ZvecError) -> WriteSummary {
         try await asyncWrite { try $0.delete(ids: ids) }
+    }
+    public func deleteWithResults(ids: [String]) async throws(ZvecError) -> [DocumentWriteResult] {
+        try await asyncWrite { try $0.deleteWithResults(ids: ids) }
+    }
+    public func delete(where filter: String) async throws(ZvecError) {
+        try await asyncWrite { try $0.delete(where: filter) }
     }
     public func fetch(
         ids: [String], outputFields: [String] = [], includeVector: Bool = false
@@ -329,12 +395,35 @@ public final class Collection: @unchecked Sendable {
     public func query(_ query: VectorQuery) async throws(ZvecError) -> [Document] {
         try await asyncRead { try $0.query(query) }
     }
+    public func query(_ query: FullTextQuery) async throws(ZvecError) -> [Document] {
+        try await asyncRead { try $0.query(query) }
+    }
     public func query(_ query: MultiQuery) async throws(ZvecError) -> [Document] {
         try await asyncRead { try $0.query(query) }
     }
     public func query(_ query: GroupByVectorQuery) async throws(ZvecError) -> [GroupResult] {
         try await asyncRead { try $0.query(query) }
     }
+    public func createIndex(_ index: IndexConfiguration, for field: String) async throws(ZvecError) {
+        try await asyncWrite { try $0.createIndex(index, for: field) }
+    }
+    public func dropIndex(for field: String) async throws(ZvecError) {
+        try await asyncWrite { try $0.dropIndex(for: field) }
+    }
+    public func addColumn(
+        _ field: FieldSchema, defaultExpression: String? = nil
+    ) async throws(ZvecError) {
+        try await asyncWrite { try $0.addColumn(field, defaultExpression: defaultExpression) }
+    }
+    public func dropColumn(_ name: String) async throws(ZvecError) {
+        try await asyncWrite { try $0.dropColumn(name) }
+    }
+    public func alterColumn(
+        _ name: String, newName: String? = nil, schema: FieldSchema? = nil
+    ) async throws(ZvecError) {
+        try await asyncWrite { try $0.alterColumn(name, newName: newName, schema: schema) }
+    }
+    public func destroy() async throws(ZvecError) { try await asyncWrite { try $0.destroy() } }
     public func close() async throws(ZvecError) { try await asyncWrite { try $0.close() } }
 
     deinit {
@@ -348,7 +437,10 @@ public final class Collection: @unchecked Sendable {
 
     private func writeDocuments(
         _ documents: [Document],
-        operation: (OpaquePointer?, UnsafeMutablePointer<OpaquePointer?>?, Int, UnsafeMutablePointer<Int>?, UnsafeMutablePointer<Int>?) -> zvec_error_code_t
+        operation: (
+            OpaquePointer?, UnsafeMutablePointer<OpaquePointer?>?, Int, UnsafeMutablePointer<Int>?,
+            UnsafeMutablePointer<Int>?
+        ) -> zvec_error_code_t
     ) throws(ZvecError) -> WriteSummary {
         try write { handle in
             guard !documents.isEmpty else { return WriteSummary(succeeded: 0, failed: 0) }
@@ -365,7 +457,10 @@ public final class Collection: @unchecked Sendable {
 
     private func detailedWrite(
         _ documents: [Document],
-        operation: (OpaquePointer?, UnsafeMutablePointer<OpaquePointer?>?, Int, UnsafeMutablePointer<UnsafeMutablePointer<zvec_write_result_t>?>?, UnsafeMutablePointer<Int>?) -> zvec_error_code_t
+        operation: (
+            OpaquePointer?, UnsafeMutablePointer<OpaquePointer?>?, Int,
+            UnsafeMutablePointer<UnsafeMutablePointer<zvec_write_result_t>?>?, UnsafeMutablePointer<Int>?
+        ) -> zvec_error_code_t
     ) throws(ZvecError) -> [DocumentWriteResult] {
         try write { handle in
             guard !documents.isEmpty else { return [] }
@@ -387,10 +482,13 @@ public final class Collection: @unchecked Sendable {
         guard let native else { return [] }
         return (0..<min(count, ids.count)).map { index in
             let result = native[index]
-            let error = result.code == ZVEC_OK ? nil : ZvecError(
-                code: CAPI.code(for: result.code),
-                message: CAPI.string(result.message) ?? "Document write failed"
-            )
+            let error =
+                result.code == ZVEC_OK
+                ? nil
+                : ZvecError(
+                    code: CAPI.code(for: result.code),
+                    message: CAPI.string(result.message) ?? "Document write failed"
+                )
             return DocumentWriteResult(id: ids[index], error: error)
         }
     }
@@ -430,8 +528,7 @@ public final class Collection: @unchecked Sendable {
             guard let handle else {
                 return .failure(ZvecError(code: .closed, message: "Collection is closed"))
             }
-            do { return .success(try operation(handle)) }
-            catch { return .failure(CAPI.coerce(error)) }
+            do { return .success(try operation(handle)) } catch { return .failure(CAPI.coerce(error)) }
         }
         return try result.get()
     }
@@ -441,8 +538,7 @@ public final class Collection: @unchecked Sendable {
             guard let handle else {
                 return .failure(ZvecError(code: .closed, message: "Collection is closed"))
             }
-            do { return .success(try operation(handle)) }
-            catch { return .failure(CAPI.coerce(error)) }
+            do { return .success(try operation(handle)) } catch { return .failure(CAPI.coerce(error)) }
         }
         return try result.get()
     }
@@ -451,8 +547,7 @@ public final class Collection: @unchecked Sendable {
         _ operation: (OpaquePointer?) throws -> Result
     ) throws(ZvecError) -> Result {
         let result: Swift.Result<Result, ZvecError> = queue.sync(flags: .barrier) {
-            do { return .success(try operation(handle)) }
-            catch { return .failure(CAPI.coerce(error)) }
+            do { return .success(try operation(handle)) } catch { return .failure(CAPI.coerce(error)) }
         }
         return try result.get()
     }
@@ -475,17 +570,37 @@ public final class Collection: @unchecked Sendable {
         if Task.isCancelled { throw ZvecError(code: .cancelled, message: "Operation was cancelled") }
         let result: Swift.Result<Result, ZvecError> = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                do { continuation.resume(returning: .success(try operation(self))) }
-                catch { continuation.resume(returning: .failure(CAPI.coerce(error))) }
+                do { continuation.resume(returning: .success(try operation(self))) } catch {
+                    continuation.resume(returning: .failure(CAPI.coerce(error)))
+                }
             }
         }
         if Task.isCancelled { throw ZvecError(code: .cancelled, message: "Operation was cancelled") }
         return try result.get()
     }
+
+    private static func runAsync<Result: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Result
+    ) async throws(ZvecError) -> Result {
+        if Task.isCancelled {
+            throw ZvecError(code: .cancelled, message: "Operation was cancelled")
+        }
+        let result: Swift.Result<Result, ZvecError> = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do { continuation.resume(returning: .success(try operation())) } catch {
+                    continuation.resume(returning: .failure(CAPI.coerce(error)))
+                }
+            }
+        }
+        if Task.isCancelled {
+            throw ZvecError(code: .cancelled, message: "Operation was cancelled")
+        }
+        return try result.get()
+    }
 }
 
-private extension Array where Element == String {
-    func withCStringArray<Result>(
+extension Array where Element == String {
+    fileprivate func withCStringArray<Result>(
         _ body: (UnsafeMutablePointer<UnsafePointer<CChar>?>?) throws -> Result
     ) throws -> Result {
         let storage: [UnsafeMutablePointer<CChar>?] = map { strdup($0) }

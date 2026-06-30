@@ -25,6 +25,34 @@ public struct Document: Sendable, Equatable {
         get { fields[field] }
         set { fields[field] = newValue }
     }
+
+    public func serializedData() throws(ZvecError) -> Data {
+        try CAPI.typed { try NativeDocument(self).serialized() }
+    }
+
+    public static func deserialize(
+        _ data: Data, schema: CollectionSchema
+    ) throws(ZvecError) -> Document {
+        try CAPI.typed { try NativeDocument(serialized: data).value(schema: schema) }
+    }
+
+    public func nativeMemoryUsage() throws(ZvecError) -> Int {
+        try CAPI.typed { try NativeDocument(self).memoryUsage() }
+    }
+
+    public func nativeDetailDescription() throws(ZvecError) -> String {
+        try CAPI.typed { try NativeDocument(self).detailDescription() }
+    }
+
+    public func merging(_ other: Document) -> Document {
+        var result = self
+        result.fields.merge(other.fields) { _, replacement in replacement }
+        if !other.id.isEmpty { result.id = other.id }
+        if let documentID = other.documentID { result.documentID = documentID }
+        if let score = other.score { result.score = score }
+        result.operation = other.operation
+        return result
+    }
 }
 
 public struct WriteSummary: Sendable, Equatable {

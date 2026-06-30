@@ -21,6 +21,7 @@
 - arm64 iOS 16+ 真机或 Apple Silicon 模拟器
 
 上游仅在 Linux x86_64 启用 DiskANN/Vamana；Swift API 保留相应类型，但 Apple 平台会明确返回不支持错误。
+此外，Zvec v0.5.1 在 Apple 平台创建稀疏向量索引时会中止进程，因此 Swift 层会提前拒绝该不安全配置；稀疏向量仍可通过暴力检索路径查询。
 
 ## 安装
 
@@ -29,6 +30,7 @@
 ```
 
 快速示例和开发命令参见 [英文 README](README.md)，完整设计约束参见 [plan.md](plan.md)，贡献流程参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+DocC API 文档源码位于 [Sources/Zvec/Zvec.docc](Sources/Zvec/Zvec.docc)。
 
 原生构建固定到明确的上游 commit，并包含一个范围受限的
 [C++ 兼容层](Native/README.md)，用于补齐 Zvec v0.5.1 C API 的数组读取与

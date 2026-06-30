@@ -44,7 +44,7 @@
 - 所有高层失败使用 Swift 6 typed throws：`throws(ZvecError)`。
   - 保留原生错误码、消息、源文件、函数及行号。
   - 增加 Swift 侧 `.closed`、`.cancelled`、`.incompatibleNativeVersion`。
-  - 未知原生枚举值使用 `.unknown(rawValue:)` 保持前向兼容。
+  - 未知原生错误码使用 `.unknown(rawValue:)` 保持诊断信息；Schema 和索引枚举固定到 v0.5.1，遇到未知值安全失败。
 - `CZvec` 保持公开，供高级使用者访问完整原始 C API；高层 API 不暴露 malloc、裸指针或手动 destroy。
 
 ## Implementation Changes
@@ -54,7 +54,7 @@
   - `Sources/Zvec` 包含值模型、C 编解码、资源句柄、Collection、查询、并发及错误映射。
   - Jieba 的两个字典文件作为 SwiftPM resources 随包分发，并在初始化前自动注册，保证中文 FTS 开箱可用。
 - FFI 与资源安全：
-  - 内部使用 noncopyable owned-handle 封装、`borrowing`/`consuming` 表达所有权转移，并在 `deinit` 中调用对应 destroy/free。
+  - 内部使用 owned-handle 封装，在适合一次性消费的配置桥接中采用 noncopyable 类型，并在 `deinit` 中调用对应 destroy/free。
   - 公共 Schema、Document、Query 保持纯 Swift 值类型；每次调用临时转换为 C 对象，结果立即深拷贝回 Swift 后释放原生内存。
   - 集中实现字符串数组、字节缓冲区、稀疏向量及特殊数组编码，避免各 API 重复裸指针逻辑。
 - 并发模型：

@@ -48,4 +48,3 @@ public struct ZvecError: Error, Sendable, Equatable, CustomStringConvertible {
         ZvecError(code: .invalidArgument, message: message)
     }
 }
-

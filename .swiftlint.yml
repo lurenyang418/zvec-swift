@@ -1,0 +1,12 @@
+included:
+  - Sources
+  - Tests
+
+only_rules:
+  - duplicate_imports
+  - trailing_newline
+  - trailing_whitespace
+  - unneeded_override
+  - unused_import
+
+strict: true

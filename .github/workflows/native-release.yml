@@ -13,6 +13,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build all Apple slices
         run: scripts/build-xcframework.sh all
+      - name: Verify XCFramework
+        run: scripts/verify-xcframework.sh
       - name: Package and checksum
         run: scripts/package-native.sh | tee Artifacts/checksum.txt
       - uses: actions/upload-artifact@v4
@@ -30,4 +32,3 @@ jobs:
           Artifacts/checksum.txt
           --title "Zvec native v0.5.1"
           --notes "Prebuilt CZvec XCFramework for macOS arm64, iOS arm64, and iOS Simulator arm64."
-

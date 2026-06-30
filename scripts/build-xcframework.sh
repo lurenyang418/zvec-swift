@@ -25,7 +25,10 @@ if [[ ! -d "$SOURCE_ROOT/.git" ]]; then
 fi
 git -C "$SOURCE_ROOT" fetch --tags origin
 git -C "$SOURCE_ROOT" checkout --detach "$ZVEC_COMMIT"
-git -C "$SOURCE_ROOT" submodule update --init --recursive
+git -C "$SOURCE_ROOT" reset --hard "$ZVEC_COMMIT"
+git -C "$SOURCE_ROOT" submodule update --init --recursive --force
+git -C "$SOURCE_ROOT" submodule foreach --recursive \
+  'git reset --hard HEAD >/dev/null && git clean -fd >/dev/null'
 cp "$ROOT/Native/zvec_swift_shim.cc" "$SOURCE_ROOT/src/binding/c/"
 cp "$ROOT/Native/zvec_swift_shim.h" "$SOURCE_ROOT/src/include/zvec/"
 if ! grep -q zvec_swift_shim.cc "$SOURCE_ROOT/src/binding/c/CMakeLists.txt"; then
@@ -65,6 +68,12 @@ make_framework() {
   local sdk_path
   sdk_path="$(xcrun --sdk "$sdk" --show-sdk-path)"
 
+  # Upstream applies mutually exclusive Arrow patches in the shared submodule.
+  # Reset it for every platform so sequential macOS/iOS builds are deterministic.
+  local arrow_source="$SOURCE_ROOT/thirdparty/arrow/apache-arrow-21.0.0"
+  git -C "$arrow_source" reset --hard HEAD
+  git -C "$arrow_source" clean -fd
+
   cmake_args=(
     -S "$SOURCE_ROOT" -B "$build"
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$deployment" \
@@ -72,6 +81,7 @@ make_framework() {
     -DCMAKE_OSX_SYSROOT="$sdk_path" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DBUILD_SHARED_LIBS=OFF \
     -DBUILD_C_BINDINGS=ON \
     -DBUILD_PYTHON_BINDINGS=OFF \
     -DBUILD_TOOLS=OFF \

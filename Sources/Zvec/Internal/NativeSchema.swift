@@ -10,6 +10,10 @@ final class NativeCollectionSchema {
         }
         self.handle = handle
         do {
+            try CAPI.check(
+                zvec_collection_schema_set_max_doc_count_per_segment(
+                    handle, schema.maximumDocumentsPerSegment
+                ))
             for field in schema.fields {
                 let nativeField = try NativeFieldSchema(field)
                 try CAPI.check(zvec_collection_schema_add_field(handle, nativeField.handle))
@@ -39,11 +43,15 @@ final class NativeCollectionSchema {
         fields.reserveCapacity(count)
         for index in 0..<count {
             guard let fieldName = names?[index],
-                  let native = zvec_collection_schema_get_field(handle, fieldName)
+                let native = zvec_collection_schema_get_field(handle, fieldName)
             else { continue }
             fields.append(try NativeFieldSchema.decode(native))
         }
-        return try CollectionSchema(name: name, fields: fields)
+        return try CollectionSchema(
+            name: name,
+            fields: fields,
+            maximumDocumentsPerSegment: zvec_collection_schema_get_max_doc_count_per_segment(handle)
+        )
     }
 
     deinit { zvec_collection_schema_destroy(handle) }
@@ -53,9 +61,11 @@ final class NativeFieldSchema {
     let handle: OpaquePointer
 
     init(_ field: FieldSchema) throws {
-        guard let handle = field.name.withCString({
-            zvec_field_schema_create($0, field.dataType.rawValue, field.nullable, UInt32(field.dimensions))
-        }) else {
+        guard
+            let handle = field.name.withCString({
+                zvec_field_schema_create($0, field.dataType.rawValue, field.nullable, UInt32(field.dimensions))
+            })
+        else {
             throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT)
         }
         self.handle = handle
@@ -112,19 +122,21 @@ final class NativeIndexConfiguration {
                 try CAPI.check(zvec_index_params_set_hnsw_params(handle, Int32(m), Int32(efConstruction)))
             case let .ivf(metric, quantization, listCount, iterations, useSOAR):
                 try setVector(metric: metric, quantization: quantization)
-                try CAPI.check(zvec_index_params_set_ivf_params(
-                    handle, Int32(listCount), Int32(iterations), useSOAR
-                ))
+                try CAPI.check(
+                    zvec_index_params_set_ivf_params(
+                        handle, Int32(listCount), Int32(iterations), useSOAR
+                    ))
             case let .flat(metric, quantization):
                 try setVector(metric: metric, quantization: quantization)
             case let .vamana(metric, maxDegree, buildListSize, alpha):
                 #if os(macOS) || os(iOS)
-                throw ZvecError(code: .notSupported, message: "Vamana/DiskANN is not supported on Apple platforms")
+                    throw ZvecError(code: .notSupported, message: "Vamana/DiskANN is not supported on Apple platforms")
                 #else
-                try setVector(metric: metric, quantization: .none)
-                try CAPI.check(zvec_index_params_set_vamana_params(
-                    handle, Int32(maxDegree), Int32(buildListSize), alpha, false, false
-                ))
+                    try setVector(metric: metric, quantization: .none)
+                    try CAPI.check(
+                        zvec_index_params_set_vamana_params(
+                            handle, Int32(maxDegree), Int32(buildListSize), alpha, false, false
+                        ))
                 #endif
             case let .inverted(range, wildcard):
                 try CAPI.check(zvec_index_params_set_invert_params(handle, range, wildcard))
@@ -133,9 +145,10 @@ final class NativeIndexConfiguration {
                 let extra = try Self.jsonString(options)
                 try tokenizer.nativeName.withCString { tokenizerName in
                     try extra.withCString { extra in
-                        try CAPI.check(zvec_index_params_set_fts_params(
-                            handle, tokenizerName, nativeFilters?.handle, extra
-                        ))
+                        try CAPI.check(
+                            zvec_index_params_set_fts_params(
+                                handle, tokenizerName, nativeFilters?.handle, extra
+                            ))
                     }
                 }
             }
@@ -181,9 +194,10 @@ final class NativeIndexConfiguration {
             var alpha: Float = 0
             var saturate = false
             var contiguous = false
-            try CAPI.check(zvec_index_params_get_vamana_params(
-                handle, &degree, &listSize, &alpha, &saturate, &contiguous
-            ))
+            try CAPI.check(
+                zvec_index_params_get_vamana_params(
+                    handle, &degree, &listSize, &alpha, &saturate, &contiguous
+                ))
             return .vamana(
                 metric: metric, maxDegree: Int(degree), buildListSize: Int(listSize), alpha: alpha
             )
@@ -198,11 +212,12 @@ final class NativeIndexConfiguration {
             var extra: UnsafePointer<CChar>?
             try CAPI.check(zvec_index_params_get_fts_params(handle, &tokenizer, &filters, &extra))
             defer { if let filters { zvec_string_array_destroy(filters) } }
-            let tokenizerValue: FullTextTokenizer = switch CAPI.string(tokenizer) {
-            case "whitespace": .whitespace
-            case "jieba": .jieba()
-            default: .standard
-            }
+            let tokenizerValue: FullTextTokenizer =
+                switch CAPI.string(tokenizer) {
+                case "whitespace": .whitespace
+                case "jieba": .jieba
+                default: .standard
+                }
             let filterValues = NativeStringArray.values(filters)
             let options = Self.decodeJSON(CAPI.string(extra))
             return .fullText(tokenizer: tokenizerValue, tokenFilters: filterValues, options: options)
@@ -223,7 +238,7 @@ final class NativeIndexConfiguration {
 
     private static func decodeJSON(_ value: String?) -> [String: String] {
         guard let value, let data = value.data(using: .utf8),
-              let result = try? JSONSerialization.jsonObject(with: data) as? [String: String]
+            let result = try? JSONSerialization.jsonObject(with: data) as? [String: String]
         else { return [:] }
         return result
     }

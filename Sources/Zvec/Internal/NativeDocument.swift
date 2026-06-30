@@ -30,6 +30,21 @@ final class NativeDocument {
         self.ownsHandle = true
     }
 
+    init(serialized data: Data) throws {
+        var handle: OpaquePointer?
+        try data.withUnsafeBytes { bytes in
+            try CAPI.check(
+                zvec_doc_deserialize(
+                    bytes.bindMemory(to: UInt8.self).baseAddress,
+                    bytes.count,
+                    &handle
+                ))
+        }
+        guard let handle else { throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR) }
+        self.handle = handle
+        self.ownsHandle = true
+    }
+
     private init(borrowing handle: OpaquePointer) {
         self.handle = handle
         self.ownsHandle = false
@@ -57,6 +72,25 @@ final class NativeDocument {
             documentID: zvec_doc_get_doc_id(handle),
             score: zvec_doc_get_score(handle)
         )
+    }
+
+    func serialized() throws -> Data {
+        var pointer: UnsafeMutablePointer<UInt8>?
+        var count = 0
+        try CAPI.check(zvec_doc_serialize(handle, &pointer, &count))
+        guard let pointer else { return Data() }
+        defer { zvec_free_uint8_array(pointer) }
+        return Data(bytes: pointer, count: count)
+    }
+
+    func memoryUsage() -> Int { zvec_doc_memory_usage(handle) }
+
+    func detailDescription() throws -> String {
+        var pointer: UnsafeMutablePointer<CChar>?
+        try CAPI.check(zvec_doc_to_detail_string(handle, &pointer))
+        guard let pointer else { return "" }
+        defer { zvec_free(pointer) }
+        return String(cString: pointer)
     }
 
     private static func add(
@@ -105,13 +139,14 @@ final class NativeDocument {
             defer { nativeStrings.forEach { if let value = $0 { zvec_free_string(value) } } }
             try nativeStrings.withUnsafeBufferPointer { buffer in
                 try name.withCString {
-                    try CAPI.check(zvec_doc_add_field_by_value(
-                        document,
-                        $0,
-                        type.rawValue,
-                        buffer.baseAddress,
-                        buffer.count * MemoryLayout<UnsafeMutablePointer<zvec_string_t>?>.stride
-                    ))
+                    try CAPI.check(
+                        zvec_doc_add_field_by_value(
+                            document,
+                            $0,
+                            type.rawValue,
+                            buffer.baseAddress,
+                            buffer.count * MemoryLayout<UnsafeMutablePointer<zvec_string_t>?>.stride
+                        ))
                 }
             }
         case let .arrayBool(values):
@@ -154,7 +189,9 @@ final class NativeDocument {
         to document: OpaquePointer
     ) throws where Value: BinaryFloatingPoint & Sendable & Equatable {
         var data = Data()
-        var count = UInt(vector.indices.count)
+        // zvec_doc_add_field_by_value expects a uint32_t count, while the
+        // corresponding copy API returns a size_t count.
+        var count = UInt32(vector.indices.count)
         withUnsafeBytes(of: &count) { data.append(contentsOf: $0) }
         vector.indices.withUnsafeBytes { data.append(contentsOf: $0) }
         vector.values.withUnsafeBytes { data.append(contentsOf: $0) }
@@ -178,15 +215,17 @@ final class NativeDocument {
     ) throws {
         try name.withCString { name in
             if let pointer = bytes.baseAddress {
-                try CAPI.check(zvec_doc_add_field_by_value(
-                    document, name, type.rawValue, pointer, bytes.count
-                ))
+                try CAPI.check(
+                    zvec_doc_add_field_by_value(
+                        document, name, type.rawValue, pointer, bytes.count
+                    ))
             } else {
                 var empty: UInt8 = 0
                 try withUnsafePointer(to: &empty) { pointer in
-                    try CAPI.check(zvec_doc_add_field_by_value(
-                        document, name, type.rawValue, pointer, 0
-                    ))
+                    try CAPI.check(
+                        zvec_doc_add_field_by_value(
+                            document, name, type.rawValue, pointer, 0
+                        ))
                 }
             }
         }
@@ -210,7 +249,14 @@ final class NativeDocument {
         case .vectorFloat32: return .vectorFloat32(data.array(of: Float.self))
         case .vectorFloat64: return .vectorFloat64(data.array(of: Double.self))
         case .vectorInt4:
-            return .vectorInt4(try PackedInt4Vector(bytes: data, dimensions: field.dimensions))
+            let unpacked = Array(data.prefix(field.dimensions))
+            var packed = Data(capacity: (field.dimensions + 1) / 2)
+            for index in stride(from: 0, to: unpacked.count, by: 2) {
+                let low = unpacked[index] & 0x0F
+                let high = index + 1 < unpacked.count ? (unpacked[index + 1] & 0x0F) << 4 : 0
+                packed.append(low | high)
+            }
+            return .vectorInt4(try PackedInt4Vector(bytes: packed, dimensions: field.dimensions))
         case .vectorInt8: return .vectorInt8(data.array(of: Int8.self))
         case .vectorInt16: return .vectorInt16(data.array(of: Int16.self))
         case .sparseVectorFloat16:
@@ -226,9 +272,11 @@ final class NativeDocument {
             return .arrayString(values.dropLast().map { String(decoding: $0, as: UTF8.self) })
         case .arrayBool:
             let count = try arrayCount(field.name, type: field.dataType, from: document)
-            return .arrayBool(Array(data.flatMap { byte in
-                (0..<8).map { byte & (1 << $0) != 0 }
-            }.prefix(count)))
+            return .arrayBool(
+                Array(
+                    data.flatMap { byte in
+                        (0..<8).map { byte & (1 << $0) != 0 }
+                    }.prefix(count)))
         case .arrayInt32: return .arrayInt32(data.array(of: Int32.self))
         case .arrayInt64: return .arrayInt64(data.array(of: Int64.self))
         case .arrayUInt32: return .arrayUInt32(data.array(of: UInt32.self))
@@ -245,9 +293,10 @@ final class NativeDocument {
         var pointer: UnsafeMutableRawPointer?
         var count = 0
         try name.withCString {
-            try CAPI.check(zvec_doc_get_field_value_copy(
-                document, $0, type.rawValue, &pointer, &count
-            ))
+            try CAPI.check(
+                zvec_doc_get_field_value_copy(
+                    document, $0, type.rawValue, &pointer, &count
+                ))
         }
         guard let pointer else { return Data() }
         defer { zvec_free(pointer) }
@@ -272,9 +321,10 @@ final class NativeDocument {
             var pointer: UnsafeMutablePointer<UInt8>?
             var size = 0
             try name.withCString {
-                try CAPI.check(zvec_swift_doc_binary_array_element_copy(
-                    document, $0, index, &pointer, &size
-                ))
+                try CAPI.check(
+                    zvec_swift_doc_binary_array_element_copy(
+                        document, $0, index, &pointer, &size
+                    ))
             }
             guard let pointer else { return Data() }
             defer { zvec_free(pointer) }
@@ -285,23 +335,25 @@ final class NativeDocument {
     deinit { if ownsHandle { zvec_doc_destroy(handle) } }
 }
 
-private extension Data {
-    func load<Value>(as type: Value.Type) -> Value {
+extension Data {
+    fileprivate func load<Value>(as type: Value.Type) -> Value {
         withUnsafeBytes { bytes in
             precondition(bytes.count >= MemoryLayout<Value>.size)
             return bytes.loadUnaligned(as: Value.self)
         }
     }
 
-    func array<Value>(of type: Value.Type) -> [Value] {
+    fileprivate func array<Value>(of type: Value.Type) -> [Value] {
         guard !isEmpty else { return [] }
         return withUnsafeBytes { bytes in
             let count = bytes.count / MemoryLayout<Value>.stride
-            return (0..<count).map { bytes.loadUnaligned(fromByteOffset: $0 * MemoryLayout<Value>.stride, as: Value.self) }
+            return (0..<count).map {
+                bytes.loadUnaligned(fromByteOffset: $0 * MemoryLayout<Value>.stride, as: Value.self)
+            }
         }
     }
 
-    func sparse<Value>() throws -> (indices: [UInt32], values: [Value]) {
+    fileprivate func sparse<Value>() throws -> (indices: [UInt32], values: [Value]) {
         let count = Int(load(as: UInt.self))
         let indexOffset = MemoryLayout<UInt>.size
         let valueOffset = indexOffset + count * MemoryLayout<UInt32>.stride

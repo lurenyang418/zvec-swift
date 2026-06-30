@@ -28,17 +28,44 @@ final class NativeVectorQuery {
             if let parameters = query.indexParameters {
                 try NativeQueryParameters.attach(parameters, toVectorQuery: handle)
             }
-            if let fullText = query.fullText {
-                let payload = try NativeFTS(fullText.query)
-                try CAPI.check(zvec_vector_query_set_fts(handle, payload.handle))
-                let params = fullText.parameters.defaultOperator.rawValue.uppercased()
-                guard let native = params.withCString(zvec_query_params_fts_create) else {
-                    throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT)
-                }
-                let status = zvec_vector_query_set_fts_params(handle, native)
-                if status != ZVEC_OK { zvec_query_params_fts_destroy(native) }
-                try CAPI.check(status)
+        } catch {
+            zvec_vector_query_destroy(handle)
+            throw error
+        }
+    }
+
+    deinit { zvec_vector_query_destroy(handle) }
+}
+
+final class NativeFullTextQuery {
+    let handle: OpaquePointer
+
+    init(_ query: FullTextQuery) throws {
+        guard let handle = zvec_vector_query_create() else {
+            throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
+        }
+        self.handle = handle
+        do {
+            guard query.topK > 0 else { throw ZvecError.invalid("topK must be positive") }
+            try CAPI.check(zvec_vector_query_set_topk(handle, Int32(query.topK)))
+            try query.field.withCString {
+                try CAPI.check(zvec_vector_query_set_field_name(handle, $0))
             }
+            let payload = try NativeFTS(query.query)
+            try CAPI.check(zvec_vector_query_set_fts(handle, payload.handle))
+            if let filter = query.filter {
+                try filter.withCString { try CAPI.check(zvec_vector_query_set_filter(handle, $0)) }
+            }
+            try query.outputFields.withCStringArray {
+                try CAPI.check(zvec_vector_query_set_output_fields(handle, $0, query.outputFields.count))
+            }
+            let operation = query.parameters.defaultOperator.rawValue.uppercased()
+            guard let parameters = operation.withCString(zvec_query_params_fts_create) else {
+                throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT)
+            }
+            let status = zvec_vector_query_set_fts_params(handle, parameters)
+            if status != ZVEC_OK { zvec_query_params_fts_destroy(parameters) }
+            try CAPI.check(status)
         } catch {
             zvec_vector_query_destroy(handle)
             throw error
@@ -61,9 +88,6 @@ final class NativeGroupByQuery {
             guard vector.topK > 0 else { throw ZvecError.invalid("topK must be positive") }
             guard query.groupCount > 0 else { throw ZvecError.invalid("groupCount must be positive") }
             guard query.groupTopK > 0 else { throw ZvecError.invalid("groupTopK must be positive") }
-            guard vector.fullText == nil else {
-                throw ZvecError(code: .notSupported, message: "Group-by queries do not support full-text matching in Zvec 0.5.1")
-            }
             try vector.field.withCString {
                 try CAPI.check(zvec_group_by_vector_query_set_field_name(handle, $0))
             }
@@ -82,9 +106,10 @@ final class NativeGroupByQuery {
             }
             try CAPI.check(zvec_group_by_vector_query_set_include_vector(handle, vector.includeVector))
             try vector.outputFields.withCStringArray {
-                try CAPI.check(zvec_group_by_vector_query_set_output_fields(
-                    handle, $0, vector.outputFields.count
-                ))
+                try CAPI.check(
+                    zvec_group_by_vector_query_set_output_fields(
+                        handle, $0, vector.outputFields.count
+                    ))
             }
             if let parameters = vector.indexParameters {
                 try NativeQueryParameters.attach(parameters, toGroupByQuery: handle)
@@ -126,7 +151,9 @@ final class NativeMultiQuery {
         }
         self.handle = handle
         do {
-            guard query.queries.count >= 2 else { throw ZvecError.invalid("MultiQuery requires at least two subqueries") }
+            guard query.queries.count >= 2 else {
+                throw ZvecError.invalid("MultiQuery requires at least two subqueries")
+            }
             guard query.topK > 0 else { throw ZvecError.invalid("topK must be positive") }
             try CAPI.check(zvec_multi_query_set_topk(handle, Int32(query.topK)))
             if let filter = query.filter {
@@ -183,9 +210,10 @@ final class NativeSubQuery {
             case let .sparseFloat32(vector):
                 try vector.indices.withUnsafeBufferPointer { indices in
                     try vector.values.withUnsafeBufferPointer { values in
-                        try CAPI.check(zvec_sub_query_set_sparse_vector(
-                            handle, indices.baseAddress, values.baseAddress, indices.count
-                        ))
+                        try CAPI.check(
+                            zvec_sub_query_set_sparse_vector(
+                                handle, indices.baseAddress, values.baseAddress, indices.count
+                            ))
                     }
                 }
             case let .fullText(text):
@@ -215,16 +243,20 @@ enum NativeQueryParameters {
     static func attach(_ value: IndexQueryParameters, toVectorQuery query: OpaquePointer) throws {
         switch value {
         case let .hnsw(value):
-            guard let native = zvec_query_params_hnsw_create(
-                Int32(value.efSearch), value.radius ?? 0, value.linearSearch, value.useRefiner
-            ) else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
+            guard
+                let native = zvec_query_params_hnsw_create(
+                    Int32(value.efSearch), value.radius ?? 0, value.linearSearch, value.useRefiner
+                )
+            else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
             let status = zvec_vector_query_set_hnsw_params(query, native)
             if status != ZVEC_OK { zvec_query_params_hnsw_destroy(native) }
             try CAPI.check(status)
         case let .ivf(value):
-            guard let native = zvec_query_params_ivf_create(
-                Int32(value.probeCount), value.useRefiner, value.scaleFactor
-            ) else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
+            guard
+                let native = zvec_query_params_ivf_create(
+                    Int32(value.probeCount), value.useRefiner, value.scaleFactor
+                )
+            else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
             if let radius = value.radius { try CAPI.check(zvec_query_params_ivf_set_radius(native, radius)) }
             try CAPI.check(zvec_query_params_ivf_set_is_linear(native, value.linearSearch))
             let status = zvec_vector_query_set_ivf_params(query, native)
@@ -247,16 +279,20 @@ enum NativeQueryParameters {
     static func attach(_ value: IndexQueryParameters, toSubQuery query: OpaquePointer) throws {
         switch value {
         case let .hnsw(value):
-            guard let native = zvec_query_params_hnsw_create(
-                Int32(value.efSearch), value.radius ?? 0, value.linearSearch, value.useRefiner
-            ) else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
+            guard
+                let native = zvec_query_params_hnsw_create(
+                    Int32(value.efSearch), value.radius ?? 0, value.linearSearch, value.useRefiner
+                )
+            else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
             let status = zvec_sub_query_set_hnsw_params(query, native)
             if status != ZVEC_OK { zvec_query_params_hnsw_destroy(native) }
             try CAPI.check(status)
         case let .ivf(value):
-            guard let native = zvec_query_params_ivf_create(
-                Int32(value.probeCount), value.useRefiner, value.scaleFactor
-            ) else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
+            guard
+                let native = zvec_query_params_ivf_create(
+                    Int32(value.probeCount), value.useRefiner, value.scaleFactor
+                )
+            else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
             let status = zvec_sub_query_set_ivf_params(query, native)
             if status != ZVEC_OK { zvec_query_params_ivf_destroy(native) }
             try CAPI.check(status)
@@ -275,16 +311,20 @@ enum NativeQueryParameters {
     static func attach(_ value: IndexQueryParameters, toGroupByQuery query: OpaquePointer) throws {
         switch value {
         case let .hnsw(value):
-            guard let native = zvec_query_params_hnsw_create(
-                Int32(value.efSearch), value.radius ?? 0, value.linearSearch, value.useRefiner
-            ) else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
+            guard
+                let native = zvec_query_params_hnsw_create(
+                    Int32(value.efSearch), value.radius ?? 0, value.linearSearch, value.useRefiner
+                )
+            else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
             let status = zvec_group_by_vector_query_set_hnsw_params(query, native)
             if status != ZVEC_OK { zvec_query_params_hnsw_destroy(native) }
             try CAPI.check(status)
         case let .ivf(value):
-            guard let native = zvec_query_params_ivf_create(
-                Int32(value.probeCount), value.useRefiner, value.scaleFactor
-            ) else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
+            guard
+                let native = zvec_query_params_ivf_create(
+                    Int32(value.probeCount), value.useRefiner, value.scaleFactor
+                )
+            else { throw CAPI.error(for: ZVEC_ERROR_INVALID_ARGUMENT) }
             if let radius = value.radius { try CAPI.check(zvec_query_params_ivf_set_radius(native, radius)) }
             try CAPI.check(zvec_query_params_ivf_set_is_linear(native, value.linearSearch))
             let status = zvec_group_by_vector_query_set_ivf_params(query, native)
@@ -305,8 +345,8 @@ enum NativeQueryParameters {
     }
 }
 
-private extension DenseQueryVector {
-    func withUnsafeBytes<Result>(
+extension DenseQueryVector {
+    fileprivate func withUnsafeBytes<Result>(
         _ body: (UnsafeRawBufferPointer) throws -> Result
     ) throws -> Result {
         switch self {
@@ -321,8 +361,8 @@ private extension DenseQueryVector {
     }
 }
 
-private extension Array where Element == String {
-    func withCStringArray<Result>(
+extension Array where Element == String {
+    fileprivate func withCStringArray<Result>(
         _ body: (UnsafeMutablePointer<UnsafePointer<CChar>?>?) throws -> Result
     ) throws -> Result {
         let storage: [UnsafeMutablePointer<CChar>?] = map { strdup($0) }

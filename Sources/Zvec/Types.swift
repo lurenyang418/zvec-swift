@@ -171,4 +171,3 @@ public enum DenseQueryVector: Sendable, Equatable {
     case int8([Int8])
     case int16([Int16])
 }
-

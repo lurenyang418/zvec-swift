@@ -9,4 +9,3 @@ ARCHIVE="$ROOT/Artifacts/CZvec.xcframework.zip"
 rm -f "$ARCHIVE"
 ditto -c -k --sequesterRsrc --keepParent "$ARTIFACT" "$ARCHIVE"
 swift package compute-checksum "$ARCHIVE"
-

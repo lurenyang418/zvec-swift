@@ -21,6 +21,9 @@ Safe, idiomatic Swift 6.1 bindings for [Alibaba Zvec](https://github.com/alibaba
 - iOS 16+ on arm64 devices or Apple Silicon simulators
 
 DiskANN/Vamana is present in the API for source compatibility but is unavailable on Apple platforms because upstream enables it only on Linux x86_64.
+Zvec v0.5.1 also aborts while creating indexed sparse-vector fields on Apple;
+the Swift layer rejects that unsafe configuration and keeps sparse queries
+available through upstream's brute-force path.
 
 ## Installation
 
@@ -67,6 +70,7 @@ let hits = try collection.query(VectorQuery(
 ```
 
 See [`Sources/ZvecExample`](Sources/ZvecExample) for a runnable example and [`plan.md`](plan.md) for the implementation contract.
+API documentation source lives in [`Sources/Zvec/Zvec.docc`](Sources/Zvec/Zvec.docc).
 
 ## Development
 

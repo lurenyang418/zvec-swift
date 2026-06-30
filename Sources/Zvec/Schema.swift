@@ -3,7 +3,7 @@ import Foundation
 public enum FullTextTokenizer: Sendable, Equatable {
     case standard
     case whitespace
-    case jieba(dictionaryDirectory: URL? = nil)
+    case jieba
 
     var nativeName: String {
         switch self {
@@ -63,6 +63,15 @@ public struct FieldSchema: Sendable, Equatable {
         } else if dimensions != 0 {
             throw .invalid("Only dense vector fields accept dimensions")
         }
+        #if os(macOS) || os(iOS)
+            if [.sparseVectorFloat16, .sparseVectorFloat32].contains(type), index != nil {
+                throw ZvecError(
+                    code: .notSupported,
+                    message:
+                        "Indexed sparse-vector fields are unsafe in Zvec 0.5.1 on Apple platforms; use brute-force sparse queries"
+                )
+            }
+        #endif
         self.name = name
         self.dataType = type
         self.nullable = nullable
@@ -112,18 +121,35 @@ public enum SchemaBuilder {
 public struct CollectionSchema: Sendable, Equatable {
     public var name: String
     public var fields: [FieldSchema]
+    public var maximumDocumentsPerSegment: UInt64
 
-    public init(name: String, fields: [FieldSchema]) throws(ZvecError) {
+    public init(
+        name: String,
+        fields: [FieldSchema],
+        maximumDocumentsPerSegment: UInt64 = 10_000_000
+    ) throws(ZvecError) {
         guard !name.isEmpty else { throw .invalid("Collection name must not be empty") }
         let names = Set(fields.map(\.name))
         guard names.count == fields.count else { throw .invalid("Schema field names must be unique") }
+        guard maximumDocumentsPerSegment >= 1_000 else {
+            throw .invalid("maximumDocumentsPerSegment must be at least 1,000")
+        }
         self.name = name
         self.fields = fields
+        self.maximumDocumentsPerSegment = maximumDocumentsPerSegment
     }
 
-    public init(_ name: String, @SchemaBuilder fields: () throws -> [FieldSchema]) throws(ZvecError) {
+    public init(
+        _ name: String,
+        maximumDocumentsPerSegment: UInt64 = 10_000_000,
+        @SchemaBuilder fields: () throws -> [FieldSchema]
+    ) throws(ZvecError) {
         let fields = try CAPI.typed { try fields() }
-        try self.init(name: name, fields: fields)
+        try self.init(
+            name: name,
+            fields: fields,
+            maximumDocumentsPerSegment: maximumDocumentsPerSegment
+        )
     }
 
     public func field(named name: String) -> FieldSchema? {

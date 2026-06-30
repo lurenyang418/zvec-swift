@@ -102,15 +102,24 @@ public enum IndexQueryParameters: Sendable, Equatable {
 public struct FullTextQuery: Sendable, Equatable {
     public var field: String
     public var query: String
+    public var topK: Int
+    public var filter: String?
+    public var outputFields: [String]
     public var parameters: FullTextQueryParameters
 
     public init(
         field: String,
         query: String,
+        topK: Int = 10,
+        filter: String? = nil,
+        outputFields: [String] = [],
         parameters: FullTextQueryParameters = .init()
     ) {
         self.field = field
         self.query = query
+        self.topK = topK
+        self.filter = filter
+        self.outputFields = outputFields
         self.parameters = parameters
     }
 }
@@ -123,7 +132,6 @@ public struct VectorQuery: Sendable, Equatable {
     public var includeVector: Bool
     public var outputFields: [String]
     public var indexParameters: IndexQueryParameters?
-    public var fullText: FullTextQuery?
 
     public init(
         field: String,
@@ -132,8 +140,7 @@ public struct VectorQuery: Sendable, Equatable {
         filter: String? = nil,
         includeVector: Bool = false,
         outputFields: [String] = [],
-        indexParameters: IndexQueryParameters? = nil,
-        fullText: FullTextQuery? = nil
+        indexParameters: IndexQueryParameters? = nil
     ) {
         self.field = field
         self.vector = vector
@@ -142,7 +149,6 @@ public struct VectorQuery: Sendable, Equatable {
         self.includeVector = includeVector
         self.outputFields = outputFields
         self.indexParameters = indexParameters
-        self.fullText = fullText
     }
 }
 
@@ -222,4 +228,3 @@ public struct MultiQuery: Sendable, Equatable {
         self.reranker = reranker
     }
 }
-

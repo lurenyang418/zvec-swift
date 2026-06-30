@@ -27,11 +27,13 @@ public enum ZvecRuntime {
                     state.initialized = true
                     return
                 }
-                guard zvec_check_version(
-                    Int32(CAPI.minimumVersion.major),
-                    Int32(CAPI.minimumVersion.minor),
-                    Int32(CAPI.minimumVersion.patch)
-                ) else {
+                guard
+                    zvec_check_version(
+                        Int32(CAPI.minimumVersion.major),
+                        Int32(CAPI.minimumVersion.minor),
+                        Int32(CAPI.minimumVersion.patch)
+                    )
+                else {
                     throw ZvecError(
                         code: .incompatibleNativeVersion(required: "0.5.1", actual: version),
                         message: "CZvec 0.5.1 or newer is required"
@@ -88,8 +90,8 @@ public enum ZvecRuntime {
 
     private static func registerBundledJiebaDictionaryIfPresent() {
         guard let directory = Bundle.module.url(forResource: "jieba_dict", withExtension: nil),
-              FileManager.default.fileExists(atPath: directory.appending(path: "jieba.dict.utf8").path),
-              FileManager.default.fileExists(atPath: directory.appending(path: "hmm_model.utf8").path)
+            FileManager.default.fileExists(atPath: directory.appending(path: "jieba.dict.utf8").path),
+            FileManager.default.fileExists(atPath: directory.appending(path: "hmm_model.utf8").path)
         else { return }
         directory.path.withCString(zvec_set_default_jieba_dict_dir)
     }

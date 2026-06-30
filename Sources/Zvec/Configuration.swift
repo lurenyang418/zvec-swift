@@ -68,4 +68,3 @@ public struct ZvecCapabilities: Sendable, Equatable {
 
     public init() {}
 }
-

@@ -24,22 +24,27 @@ do {
     }
 
     try collection.insert([
-        Document(id: "doc-1", fields: [
-            "title": .string("hello"),
-            "embedding": .vectorFloat32([0.1, 0.2, 0.3, 0.4]),
-        ]),
-        Document(id: "doc-2", fields: [
-            "title": .string("world"),
-            "embedding": .vectorFloat32([0.2, 0.3, 0.4, 0.1]),
-        ]),
+        Document(
+            id: "doc-1",
+            fields: [
+                "title": .string("hello"),
+                "embedding": .vectorFloat32([0.1, 0.2, 0.3, 0.4]),
+            ]),
+        Document(
+            id: "doc-2",
+            fields: [
+                "title": .string("world"),
+                "embedding": .vectorFloat32([0.2, 0.3, 0.4, 0.1]),
+            ]),
     ])
 
-    let results = try collection.query(VectorQuery(
-        field: "embedding",
-        vector: .float32([0.4, 0.3, 0.3, 0.1]),
-        topK: 10,
-        outputFields: ["title"]
-    ))
+    let results = try collection.query(
+        VectorQuery(
+            field: "embedding",
+            vector: .float32([0.4, 0.3, 0.3, 0.1]),
+            topK: 10,
+            outputFields: ["title"]
+        ))
     for result in results {
         print("\(result.id) score=\(result.score ?? 0) title=\(String(describing: result["title"]))")
     }
@@ -47,4 +52,3 @@ do {
     fputs("zvec-example failed: \(error)\n", stderr)
     exit(EXIT_FAILURE)
 }
-

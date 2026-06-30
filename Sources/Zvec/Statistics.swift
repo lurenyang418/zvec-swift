@@ -17,4 +17,3 @@ public struct CollectionStatistics: Sendable, Equatable {
         self.indexStatistics = indexStatistics
     }
 }
-
