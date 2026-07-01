@@ -10,6 +10,7 @@ Safe, idiomatic Swift 6.1 bindings for [Alibaba Zvec](https://github.com/alibaba
 
 - Native Swift value types and typed errors over the complete Zvec C API.
 - Dense and sparse vectors, scalar fields, arrays, full-text search, and hybrid queries.
+- Filter-only browsing, advanced full-text expressions, and vector query by document ID.
 - HNSW, IVF, Flat, inverted, and FTS indexes on Apple platforms.
 - Synchronous and Swift Concurrency APIs with thread-safe collection lifetime management.
 - SwiftPM distribution through a prebuilt `CZvec.xcframework`; no CMake toolchain required by consumers.
@@ -44,9 +45,10 @@ try ZvecRuntime.initialize()
 defer { try? ZvecRuntime.shutdown() }
 
 let schema = try CollectionSchema("demo") {
-    VectorField("embedding", type: .float32, dimensions: 4,
-                index: .hnsw(metric: .cosine))
-    Field("title", type: .string)
+    try VectorField("embedding", type: .float32, dimensions: 4,
+                    index: .hnsw(metric: .cosine))
+    try Field("title", type: .string, index: .fullText())
+    try Field("category", type: .string)
 }
 
 let collection = try Collection.create(
@@ -55,22 +57,63 @@ let collection = try Collection.create(
 )
 defer { try? collection.close() }
 
-try collection.insert([
-    Document(id: "doc-1", fields: [
-        "title": .string("hello"),
-        "embedding": .vectorFloat32([0.1, 0.2, 0.3, 0.4]),
-    ]),
-])
+try collection.insert(Document(id: "doc-1", fields: [
+    "title": .string("hello"),
+    "category": .string("example"),
+    "embedding": .vectorFloat32([0.1, 0.2, 0.3, 0.4]),
+]))
 
 let hits = try collection.query(VectorQuery(
     field: "embedding",
     vector: .float32([0.4, 0.3, 0.3, 0.1]),
     topK: 10
 ))
+
+let rows = try collection.browse(BrowseQuery(limit: 50))
+let related = try collection.query(VectorQuery(
+    field: "embedding",
+    documentID: "doc-1",
+    topK: 10
+))
 ```
+
+## Query modes
+
+Natural-language FTS and advanced FTS expressions are distinct:
+
+```swift
+let textHits = try collection.query(FullTextQuery(
+    field: "title",
+    expression: .query("+swift -server"),
+    topK: 10
+))
+```
+
+Hybrid search uses native RRF or weighted reranking:
+
+```swift
+let hybrid = try collection.query(MultiQuery(
+    queries: [
+        SubQuery(field: "embedding", payload: .dense(.float32([0.1, 0.2, 0.3, 0.4])), topK: 20),
+        SubQuery(field: "title", payload: .fullText("swift database"), topK: 20),
+    ],
+    topK: 10,
+    reranker: .reciprocalRankFusion()
+))
+
+let groups = try collection.query(GroupByVectorQuery(
+    vectorQuery: VectorQuery(field: "embedding", documentID: "doc-1", topK: 10),
+    groupByField: "category",
+    groupCount: 5,
+    groupTopK: 2
+))
+```
+
+Open an existing collection with `Collection.open(at:)`. Every database operation has an async overload with the same result semantics.
 
 See [`Sources/ZvecExample`](Sources/ZvecExample) for a runnable example and [`plan.md`](plan.md) for the implementation contract.
 API documentation source lives in [`Sources/Zvec/Zvec.docc`](Sources/Zvec/Zvec.docc).
+The [Python parity matrix](Docs/PythonParity.md) records native and Apple-platform boundaries. Python-only embedding providers and model runtimes are intentionally outside the core package.
 
 ## Development
 

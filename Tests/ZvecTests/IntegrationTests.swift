@@ -204,6 +204,182 @@ struct IntegrationTests {
         #expect(hybrid.first?.id == "swift")
     }
 
+    @Test func browseAdvancedFullTextAndQueryByDocumentID() throws {
+        try ZvecRuntime.initialize()
+        defer { try? ZvecRuntime.shutdown() }
+
+        let schema = try CollectionSchema("core-query-extensions") {
+            try Field("title", type: .string, index: .fullText())
+            try Field("rank", type: .int64, index: .inverted())
+            try VectorField("embedding", type: .float32, dimensions: 2, index: .flat())
+        }
+        let path = FileManager.default.temporaryDirectory
+            .appending(path: "zvec-swift-core-query-\(UUID().uuidString)")
+        let collection = try Collection.create(at: path, schema: schema)
+        defer {
+            try? collection.destroy()
+            try? FileManager.default.removeItem(at: path)
+        }
+
+        #expect(try collection.browse().documents.isEmpty)
+
+        _ = try collection.insert([
+            Document(
+                id: "swift",
+                fields: [
+                    "title": .string("swift vector database"),
+                    "rank": .int64(3),
+                    "embedding": .vectorFloat32([1, 0]),
+                ]),
+            Document(
+                id: "server",
+                fields: [
+                    "title": .string("swift server"),
+                    "rank": .int64(2),
+                    "embedding": .vectorFloat32([0.9, 0.1]),
+                ]),
+            Document(
+                id: "weather",
+                fields: [
+                    "title": .string("weather report"),
+                    "rank": .int64(1),
+                    "embedding": .vectorFloat32([0, 1]),
+                ]),
+        ])
+        try collection.flush()
+
+        let browsed = try collection.browse(
+            BrowseQuery(
+                filter: "rank >= 2 AND rank <= 3", limit: 1, outputFields: ["title"]
+            )
+        )
+        #expect(browsed.documents.count == 1)
+        #expect(browsed.limitReached)
+        #expect(browsed.documents[0]["title"] != nil)
+        #expect(browsed.documents[0]["embedding"] == nil)
+        let all = try collection.browse(BrowseQuery(limit: 10))
+        #expect(all.documents.count == 3)
+        #expect(!all.limitReached)
+        let withVectors = try collection.browse(
+            BrowseQuery(
+                filter: "rank >= 1", limit: 10,
+                outputFields: ["embedding"], includeVector: true
+            )
+        )
+        #expect(withVectors.documents.allSatisfy { $0["embedding"] != nil })
+        #expect(try collection.browse(BrowseQuery(limit: 100_000)).documents.count == 3)
+        #expect(throws: ZvecError.self) {
+            try collection.browse(BrowseQuery(limit: 0))
+        }
+        #expect(throws: ZvecError.self) {
+            try collection.browse(BrowseQuery(limit: -1))
+        }
+        #expect(throws: ZvecError.self) {
+            try collection.browse(BrowseQuery(limit: 100_001))
+        }
+        do {
+            _ = try collection.browse(BrowseQuery(filter: "missing_field = 1"))
+            Issue.record("An invalid Browse filter unexpectedly succeeded")
+        } catch let error {
+            #expect(!error.message.isEmpty)
+        }
+        let advanced = try collection.query(
+            FullTextQuery(
+                field: "title",
+                expression: .query("+swift -database"),
+                topK: 3,
+                outputFields: ["title"]
+            )
+        )
+        #expect(advanced.map(\.id) == ["server"])
+        let byID = try collection.query(
+            VectorQuery(field: "embedding", documentID: "swift", topK: 3)
+        )
+        #expect(byID.first?.id == "swift")
+        let byVector = try collection.query(
+            VectorQuery(field: "embedding", vector: .float32([1, 0]), topK: 3)
+        )
+        #expect(byID.map(\.id) == byVector.map(\.id))
+        #expect(throws: ZvecError.self) {
+            try collection.query(VectorQuery(field: "title", documentID: "swift", topK: 3))
+        }
+        #expect(throws: ZvecError.self) {
+            try collection.query(
+                VectorQuery(field: "embedding", documentID: "missing", topK: 3)
+            )
+        }
+
+        let nullableSchema = try CollectionSchema("nullable-vector") {
+            try VectorField("embedding", type: .float32, dimensions: 2, nullable: true)
+        }
+        let nullablePath = FileManager.default.temporaryDirectory
+            .appending(path: "zvec-swift-null-vector-\(UUID().uuidString)")
+        let nullableCollection = try Collection.create(at: nullablePath, schema: nullableSchema)
+        defer {
+            try? nullableCollection.destroy()
+            try? FileManager.default.removeItem(at: nullablePath)
+        }
+        _ = try nullableCollection.insert(Document(id: "no-vector"))
+        do {
+            _ = try nullableCollection.query(
+                VectorQuery(field: "embedding", documentID: "no-vector", topK: 3)
+            )
+            Issue.record("Query by ID unexpectedly accepted a missing source vector")
+        } catch let error {
+            #expect(error.code == .failedPrecondition)
+        }
+    }
+
+    @Test func singleDocumentConveniencesFetchResultsAndIntrospection() async throws {
+        try await ZvecRuntime.initialize()
+        defer { try? ZvecRuntime.shutdown() }
+
+        let schema = try CollectionSchema("conveniences") {
+            try Field("value", type: .int64)
+        }
+        let path = FileManager.default.temporaryDirectory
+            .appending(path: "zvec-swift-conveniences-\(UUID().uuidString)")
+        let collection = try await Collection.create(at: path, schema: schema)
+        defer { try? FileManager.default.removeItem(at: path) }
+
+        #expect(collection.location == path.standardizedFileURL.resolvingSymlinksInPath())
+        #expect(!collection.isClosed)
+        let inserted = try await collection.insert(
+            Document(id: "one", fields: ["value": .int64(1)])
+        )
+        #expect(inserted.succeeded)
+        let updated = try await collection.update(
+            Document(id: "one", fields: ["value": .int64(2)])
+        )
+        #expect(updated.succeeded)
+        #expect(try await collection.fetch(id: "one")?["value"] == .int64(2))
+
+        let results = try await collection.fetchResults(ids: ["one", "missing", "one"])
+        #expect(results.map(\.id) == ["one", "missing", "one"])
+        #expect(results[0].document?.id == "one")
+        #expect(results[1].document == nil)
+        #expect(results[2].document?.id == "one")
+
+        let syncBrowse: () throws(ZvecError) -> BrowseResult = {
+            try collection.browse(BrowseQuery(filter: "value = 2", limit: 10))
+        }
+        let syncBrowsed = try syncBrowse()
+        let browsed = try await collection.browse(BrowseQuery(filter: "value = 2", limit: 10))
+        #expect(browsed == syncBrowsed)
+        #expect(browsed.documents.map(\.id) == ["one"])
+
+        let deleted = try await collection.delete(id: "one")
+        #expect(deleted.succeeded)
+        try await collection.close()
+        #expect(collection.isClosed)
+        do {
+            _ = try await collection.browse()
+            Issue.record("A closed collection unexpectedly accepted Browse")
+        } catch let error {
+            #expect(error.code == .closed)
+        }
+    }
+
     @Test func sparseAndDenseMultiQuery() throws {
         try ZvecRuntime.initialize()
         defer { try? ZvecRuntime.shutdown() }
@@ -291,6 +467,8 @@ struct IntegrationTests {
         try collection?.close()
         try collection?.close()
         collection = try Collection.open(at: path, options: options)
+        #expect(collection?.location == path.standardizedFileURL.resolvingSymlinksInPath())
+        #expect(collection?.isClosed == false)
         #expect(collection?.schema.maximumDocumentsPerSegment == 2_000)
         #expect(try collection?.fetch(ids: ["one"]).first?.id == "one")
         try collection?.delete(where: "rank = 1")
@@ -392,5 +570,6 @@ struct IntegrationTests {
         let serialized = try Document(id: "all", fields: values).serializedData()
         let decoded = try Document.deserialize(serialized, schema: schema)
         #expect(decoded.fields == values)
+        try schema.validate(Document(id: "all", fields: values), for: .insert)
     }
 }

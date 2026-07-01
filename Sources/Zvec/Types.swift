@@ -31,8 +31,61 @@ public enum DataType: UInt32, Sendable, CaseIterable {
     case arrayFloat = 47
     case arrayDouble = 48
 
-    public var isVector: Bool { (20...31).contains(rawValue) }
-    public var isArray: Bool { (40...48).contains(rawValue) }
+    public var isScalar: Bool {
+        switch self {
+        case .binary, .string, .bool, .int32, .int64, .uint32, .uint64, .float, .double:
+            true
+        case .undefined, .vectorBinary32, .vectorBinary64, .vectorFloat16,
+            .vectorFloat32, .vectorFloat64, .vectorInt4, .vectorInt8, .vectorInt16,
+            .sparseVectorFloat16, .sparseVectorFloat32, .arrayBinary, .arrayString,
+            .arrayBool, .arrayInt32, .arrayInt64, .arrayUInt32, .arrayUInt64,
+            .arrayFloat, .arrayDouble:
+            false
+        }
+    }
+
+    public var isDenseVector: Bool {
+        switch self {
+        case .vectorBinary32, .vectorBinary64, .vectorFloat16, .vectorFloat32,
+            .vectorFloat64, .vectorInt4, .vectorInt8, .vectorInt16:
+            true
+        case .undefined, .binary, .string, .bool, .int32, .int64, .uint32,
+            .uint64, .float, .double, .sparseVectorFloat16, .sparseVectorFloat32,
+            .arrayBinary, .arrayString, .arrayBool, .arrayInt32, .arrayInt64,
+            .arrayUInt32, .arrayUInt64, .arrayFloat, .arrayDouble:
+            false
+        }
+    }
+
+    public var isSparseVector: Bool {
+        switch self {
+        case .sparseVectorFloat16, .sparseVectorFloat32: true
+        case .undefined, .binary, .string, .bool, .int32, .int64, .uint32,
+            .uint64, .float, .double, .vectorBinary32, .vectorBinary64,
+            .vectorFloat16, .vectorFloat32, .vectorFloat64, .vectorInt4,
+            .vectorInt8, .vectorInt16, .arrayBinary, .arrayString, .arrayBool,
+            .arrayInt32, .arrayInt64, .arrayUInt32, .arrayUInt64, .arrayFloat,
+            .arrayDouble:
+            false
+        }
+    }
+
+    public var isVector: Bool { isDenseVector || isSparseVector }
+
+    public var requiresDimensions: Bool { isDenseVector }
+
+    public var isArray: Bool {
+        switch self {
+        case .arrayBinary, .arrayString, .arrayBool, .arrayInt32, .arrayInt64,
+            .arrayUInt32, .arrayUInt64, .arrayFloat, .arrayDouble:
+            true
+        case .undefined, .binary, .string, .bool, .int32, .int64, .uint32,
+            .uint64, .float, .double, .vectorBinary32, .vectorBinary64,
+            .vectorFloat16, .vectorFloat32, .vectorFloat64, .vectorInt4,
+            .vectorInt8, .vectorInt16, .sparseVectorFloat16, .sparseVectorFloat32:
+            false
+        }
+    }
 }
 
 public enum Metric: UInt32, Sendable, CaseIterable {

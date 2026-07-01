@@ -2,20 +2,25 @@ internal import CZvec
 import Foundation
 
 final class NativeVectorQuery {
-    let handle: OpaquePointer
+    private var storage: OpaquePointer?
+    var handle: OpaquePointer { storage! }
 
     init(_ query: VectorQuery) throws {
-        guard let handle = zvec_vector_query_create() else {
+        guard let created = zvec_vector_query_create() else {
             throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
         }
-        self.handle = handle
+        storage = created
         do {
+            let handle = created
             guard query.topK > 0 else { throw ZvecError.invalid("topK must be positive") }
             try CAPI.check(zvec_vector_query_set_topk(handle, CAPI.int32(query.topK, named: "topK")))
             try query.field.withCString {
                 try CAPI.check(zvec_vector_query_set_field_name(handle, $0))
             }
-            try query.vector.withUnsafeBytes {
+            guard case let .vector(vector) = query.source else {
+                throw ZvecError.invalid("A document-ID query must be resolved by its Collection")
+            }
+            try vector.withUnsafeBytes {
                 try CAPI.check(zvec_vector_query_set_query_vector(handle, $0.baseAddress, $0.count))
             }
             if let filter = query.filter {
@@ -29,33 +34,37 @@ final class NativeVectorQuery {
                 try NativeQueryParameters.attach(parameters, toVectorQuery: handle)
             }
         } catch {
-            zvec_vector_query_destroy(handle)
+            zvec_vector_query_destroy(created)
+            storage = nil
             throw error
         }
     }
 
-    deinit { zvec_vector_query_destroy(handle) }
+    deinit { if let storage { zvec_vector_query_destroy(storage) } }
 }
 
 final class NativeFullTextQuery {
-    let handle: OpaquePointer
+    private var storage: OpaquePointer?
+    var handle: OpaquePointer { storage! }
 
     init(_ query: FullTextQuery) throws {
-        guard let handle = zvec_vector_query_create() else {
+        guard let created = zvec_vector_query_create() else {
             throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
         }
-        self.handle = handle
+        storage = created
         do {
+            let handle = created
             guard query.topK > 0 else { throw ZvecError.invalid("topK must be positive") }
             try CAPI.check(zvec_vector_query_set_topk(handle, CAPI.int32(query.topK, named: "topK")))
             try query.field.withCString {
                 try CAPI.check(zvec_vector_query_set_field_name(handle, $0))
             }
-            let payload = try NativeFTS(query.query)
+            let payload = try NativeFTS(query.expression)
             try CAPI.check(zvec_vector_query_set_fts(handle, payload.handle))
             if let filter = query.filter {
                 try filter.withCString { try CAPI.check(zvec_vector_query_set_filter(handle, $0)) }
             }
+            try CAPI.check(zvec_vector_query_set_include_vector(handle, query.includeVector))
             try query.outputFields.withCStringArray {
                 try CAPI.check(zvec_vector_query_set_output_fields(handle, $0, query.outputFields.count))
             }
@@ -67,23 +76,66 @@ final class NativeFullTextQuery {
             if status != ZVEC_OK { zvec_query_params_fts_destroy(parameters) }
             try CAPI.check(status)
         } catch {
-            zvec_vector_query_destroy(handle)
+            zvec_vector_query_destroy(created)
+            storage = nil
             throw error
         }
     }
 
-    deinit { zvec_vector_query_destroy(handle) }
+    deinit { if let storage { zvec_vector_query_destroy(storage) } }
+}
+
+final class NativeBrowseQuery {
+    private var storage: OpaquePointer?
+    var handle: OpaquePointer { storage! }
+
+    init(_ query: BrowseQuery) throws {
+        guard (1...100_000).contains(query.limit) else {
+            throw ZvecError.invalid("limit must be between 1 and 100,000")
+        }
+        guard let created = zvec_vector_query_create() else {
+            throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
+        }
+        storage = created
+        do {
+            let handle = created
+            try CAPI.check(
+                zvec_vector_query_set_topk(handle, CAPI.int32(query.limit, named: "limit"))
+            )
+            if let filter = query.filter?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !filter.isEmpty
+            {
+                try filter.withCString {
+                    try CAPI.check(zvec_vector_query_set_filter(handle, $0))
+                }
+            }
+            try CAPI.check(zvec_vector_query_set_include_vector(handle, query.includeVector))
+            try query.outputFields.withCStringArray {
+                try CAPI.check(
+                    zvec_vector_query_set_output_fields(handle, $0, query.outputFields.count)
+                )
+            }
+        } catch {
+            zvec_vector_query_destroy(created)
+            storage = nil
+            throw error
+        }
+    }
+
+    deinit { if let storage { zvec_vector_query_destroy(storage) } }
 }
 
 final class NativeGroupByQuery {
-    let handle: OpaquePointer
+    private var storage: OpaquePointer?
+    var handle: OpaquePointer { storage! }
 
     init(_ query: GroupByVectorQuery) throws {
-        guard let handle = zvec_group_by_vector_query_create() else {
+        guard let created = zvec_group_by_vector_query_create() else {
             throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
         }
-        self.handle = handle
+        storage = created
         do {
+            let handle = created
             let vector = query.vectorQuery
             guard vector.topK > 0 else { throw ZvecError.invalid("topK must be positive") }
             guard query.groupCount > 0 else { throw ZvecError.invalid("groupCount must be positive") }
@@ -96,7 +148,10 @@ final class NativeGroupByQuery {
             }
             try CAPI.check(zvec_group_by_vector_query_set_group_count(handle, query.groupCount))
             try CAPI.check(zvec_group_by_vector_query_set_group_topk(handle, query.groupTopK))
-            try vector.vector.withUnsafeBytes {
+            guard case let .vector(queryVector) = vector.source else {
+                throw ZvecError.invalid("A document-ID group query must be resolved by its Collection")
+            }
+            try queryVector.withUnsafeBytes {
                 try CAPI.check(zvec_group_by_vector_query_set_query_vector(handle, $0.baseAddress, $0.count))
             }
             if let filter = vector.filter {
@@ -115,42 +170,63 @@ final class NativeGroupByQuery {
                 try NativeQueryParameters.attach(parameters, toGroupByQuery: handle)
             }
         } catch {
-            zvec_group_by_vector_query_destroy(handle)
+            zvec_group_by_vector_query_destroy(created)
+            storage = nil
             throw error
         }
     }
 
-    deinit { zvec_group_by_vector_query_destroy(handle) }
+    deinit { if let storage { zvec_group_by_vector_query_destroy(storage) } }
 }
 
 final class NativeFTS {
-    let handle: OpaquePointer
+    private var storage: OpaquePointer?
+    var handle: OpaquePointer { storage! }
 
-    init(_ query: String) throws {
-        guard let handle = zvec_fts_create() else {
+    init(_ expression: FullTextExpression) throws {
+        guard let created = zvec_fts_create() else {
             throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
         }
-        self.handle = handle
+        storage = created
         do {
-            try query.withCString { try CAPI.check(zvec_fts_set_match_string(handle, $0)) }
+            let handle = created
+            switch expression {
+            case let .match(value):
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ZvecError.invalid("Full-text match expression must not be empty")
+                }
+                try value.withCString {
+                    try CAPI.check(zvec_fts_set_match_string(handle, $0))
+                }
+            case let .query(value):
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ZvecError.invalid("Full-text query expression must not be empty")
+                }
+                try value.withCString {
+                    try CAPI.check(zvec_fts_set_query_string(handle, $0))
+                }
+            }
         } catch {
-            zvec_fts_destroy(handle)
+            zvec_fts_destroy(created)
+            storage = nil
             throw error
         }
     }
 
-    deinit { zvec_fts_destroy(handle) }
+    deinit { if let storage { zvec_fts_destroy(storage) } }
 }
 
 final class NativeMultiQuery {
-    let handle: OpaquePointer
+    private var storage: OpaquePointer?
+    var handle: OpaquePointer { storage! }
 
     init(_ query: MultiQuery) throws {
-        guard let handle = zvec_multi_query_create() else {
+        guard let created = zvec_multi_query_create() else {
             throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
         }
-        self.handle = handle
+        storage = created
         do {
+            let handle = created
             guard query.queries.count >= 2 else {
                 throw ZvecError.invalid("MultiQuery requires at least two subqueries")
             }
@@ -183,23 +259,26 @@ final class NativeMultiQuery {
                 }
             }
         } catch {
-            zvec_multi_query_destroy(handle)
+            zvec_multi_query_destroy(created)
+            storage = nil
             throw error
         }
     }
 
-    deinit { zvec_multi_query_destroy(handle) }
+    deinit { if let storage { zvec_multi_query_destroy(storage) } }
 }
 
 final class NativeSubQuery {
-    let handle: OpaquePointer
+    private var storage: OpaquePointer?
+    var handle: OpaquePointer { storage! }
 
     init(_ query: SubQuery) throws {
-        guard let handle = zvec_sub_query_create() else {
+        guard let created = zvec_sub_query_create() else {
             throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR)
         }
-        self.handle = handle
+        storage = created
         do {
+            let handle = created
             guard query.topK > 0 else { throw ZvecError.invalid("Subquery candidate count must be positive") }
             try CAPI.check(
                 zvec_sub_query_set_num_candidates(
@@ -222,8 +301,8 @@ final class NativeSubQuery {
                             ))
                     }
                 }
-            case let .fullText(text):
-                let fts = try NativeFTS(text)
+            case let .fullText(expression):
+                let fts = try NativeFTS(expression)
                 try CAPI.check(zvec_sub_query_set_fts(handle, fts.handle))
                 let op = (query.fullTextParameters ?? .init()).defaultOperator.rawValue.uppercased()
                 guard let params = op.withCString(zvec_query_params_fts_create) else {
@@ -237,12 +316,13 @@ final class NativeSubQuery {
                 try NativeQueryParameters.attach(parameters, toSubQuery: handle)
             }
         } catch {
-            zvec_sub_query_destroy(handle)
+            zvec_sub_query_destroy(created)
+            storage = nil
             throw error
         }
     }
 
-    deinit { zvec_sub_query_destroy(handle) }
+    deinit { if let storage { zvec_sub_query_destroy(storage) } }
 }
 
 enum NativeQueryParameters {

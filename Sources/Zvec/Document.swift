@@ -1,6 +1,6 @@
 import Foundation
 
-public struct Document: Sendable, Equatable {
+public struct Document: Sendable, Equatable, Identifiable {
     public var id: String
     public var documentID: UInt64?
     public var score: Float?
@@ -52,6 +52,16 @@ public struct Document: Sendable, Equatable {
         if let score = other.score { result.score = score }
         result.operation = other.operation
         return result
+    }
+}
+
+public struct DocumentFetchResult: Sendable, Equatable {
+    public let id: String
+    public let document: Document?
+
+    public init(id: String, document: Document?) {
+        self.id = id
+        self.document = document
     }
 }
 

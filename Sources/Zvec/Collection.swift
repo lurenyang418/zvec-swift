@@ -6,10 +6,12 @@ public final class Collection: @unchecked Sendable {
     private let queue: DispatchQueue
     private var handle: OpaquePointer?
     private var cachedSchema: CollectionSchema
+    public let location: URL
 
-    private init(handle: OpaquePointer, schema: CollectionSchema) {
+    private init(handle: OpaquePointer, schema: CollectionSchema, location: URL) {
         self.handle = handle
         self.cachedSchema = schema
+        self.location = location.standardizedFileURL.resolvingSymlinksInPath()
         self.queue = DispatchQueue(
             label: "dev.zvec.swift.collection.\(UUID().uuidString)",
             qos: .userInitiated,
@@ -34,7 +36,7 @@ public final class Collection: @unchecked Sendable {
                     ))
             }
             guard let handle else { throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR) }
-            return Collection(handle: handle, schema: schema)
+            return Collection(handle: handle, schema: schema, location: url)
         }
     }
 
@@ -52,7 +54,7 @@ public final class Collection: @unchecked Sendable {
             guard let handle else { throw CAPI.error(for: ZVEC_ERROR_INTERNAL_ERROR) }
             do {
                 let schema = try Self.readSchema(from: handle)
-                return Collection(handle: handle, schema: schema)
+                return Collection(handle: handle, schema: schema, location: url)
             } catch {
                 _ = zvec_collection_close(handle)
                 throw error
@@ -77,6 +79,10 @@ public final class Collection: @unchecked Sendable {
 
     public var schema: CollectionSchema {
         queue.sync { cachedSchema }
+    }
+
+    public var isClosed: Bool {
+        queue.sync { handle == nil }
     }
 
     public func refreshSchema() throws(ZvecError) -> CollectionSchema {
@@ -158,6 +164,21 @@ public final class Collection: @unchecked Sendable {
     }
 
     @discardableResult
+    public func insert(_ document: Document) throws(ZvecError) -> DocumentWriteResult {
+        try Self.singleResult(try insertWithResults([document]), operation: "insert")
+    }
+
+    @discardableResult
+    public func update(_ document: Document) throws(ZvecError) -> DocumentWriteResult {
+        try Self.singleResult(try updateWithResults([document]), operation: "update")
+    }
+
+    @discardableResult
+    public func upsert(_ document: Document) throws(ZvecError) -> DocumentWriteResult {
+        try Self.singleResult(try upsertWithResults([document]), operation: "upsert")
+    }
+
+    @discardableResult
     public func delete(ids: [String]) throws(ZvecError) -> WriteSummary {
         try write { handle in
             guard !ids.isEmpty else { return WriteSummary(succeeded: 0, failed: 0) }
@@ -189,6 +210,11 @@ public final class Collection: @unchecked Sendable {
         }
     }
 
+    @discardableResult
+    public func delete(id: String) throws(ZvecError) -> DocumentWriteResult {
+        try Self.singleResult(try deleteWithResults(ids: [id]), operation: "delete")
+    }
+
     public func delete(where filter: String) throws(ZvecError) {
         try write { handle in
             try filter.withCString { try CAPI.check(zvec_collection_delete_by_filter(handle, $0)) }
@@ -198,33 +224,51 @@ public final class Collection: @unchecked Sendable {
     public func fetch(
         ids: [String],
         outputFields: [String] = [],
-        includeVector: Bool = false
+        includeVector: Bool = true
     ) throws(ZvecError) -> [Document] {
         try read { handle in
-            guard !ids.isEmpty else { return [] }
-            let idCount = ids.count
-            var documents: UnsafeMutablePointer<OpaquePointer?>?
-            var count = 0
-            try ids.withCStringArray { idPointers in
-                try outputFields.withCStringArray { fields in
-                    try CAPI.check(
-                        zvec_collection_fetch(
-                            handle, idPointers, idCount,
-                            fields, outputFields.count, includeVector, &documents, &count
-                        ))
-                }
-            }
-            return try Self.decodeDocuments(documents, count: count, schema: cachedSchema)
+            try fetchUnlocked(
+                handle, ids: ids, outputFields: outputFields, includeVector: includeVector
+            )
+        }
+    }
+
+    public func fetch(
+        id: String,
+        outputFields: [String] = [],
+        includeVector: Bool = true
+    ) throws(ZvecError) -> Document? {
+        try fetch(ids: [id], outputFields: outputFields, includeVector: includeVector).first
+    }
+
+    public func fetchResults(
+        ids: [String],
+        outputFields: [String] = [],
+        includeVector: Bool = true
+    ) throws(ZvecError) -> [DocumentFetchResult] {
+        let documents = try fetch(
+            ids: ids, outputFields: outputFields, includeVector: includeVector
+        )
+        let documentsByID = Dictionary(documents.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return ids.map { DocumentFetchResult(id: $0, document: documentsByID[$0]) }
+    }
+
+    public func browse(_ query: BrowseQuery = .init()) throws(ZvecError) -> BrowseResult {
+        try read { handle in
+            let native = try NativeBrowseQuery(query)
+            let documents = try execute(native.handle, on: handle)
+            return BrowseResult(
+                documents: documents,
+                limitReached: documents.count == query.limit
+            )
         }
     }
 
     public func query(_ query: VectorQuery) throws(ZvecError) -> [Document] {
         try read { handle in
-            let native = try NativeVectorQuery(query)
-            var documents: UnsafeMutablePointer<OpaquePointer?>?
-            var count = 0
-            try CAPI.check(zvec_collection_query(handle, native.handle, &documents, &count))
-            return try Self.decodeDocuments(documents, count: count, schema: cachedSchema)
+            let resolved = try resolveVectorSource(query, handle: handle)
+            let native = try NativeVectorQuery(resolved)
+            return try execute(native.handle, on: handle)
         }
     }
 
@@ -250,7 +294,9 @@ public final class Collection: @unchecked Sendable {
 
     public func query(_ query: GroupByVectorQuery) throws(ZvecError) -> [GroupResult] {
         try read { handle in
-            let native = try NativeGroupByQuery(query)
+            var resolved = query
+            resolved.vectorQuery = try resolveVectorSource(query.vectorQuery, handle: handle)
+            let native = try NativeGroupByQuery(resolved)
             var results: UnsafeMutablePointer<zvec_swift_group_result_t>?
             var count = 0
             try CAPI.check(
@@ -378,19 +424,54 @@ public final class Collection: @unchecked Sendable {
     public func upsertWithResults(_ documents: [Document]) async throws(ZvecError) -> [DocumentWriteResult] {
         try await asyncWrite { try $0.upsertWithResults(documents) }
     }
+    @discardableResult
+    public func insert(_ document: Document) async throws(ZvecError) -> DocumentWriteResult {
+        try await asyncWrite { try $0.insert(document) }
+    }
+    @discardableResult
+    public func update(_ document: Document) async throws(ZvecError) -> DocumentWriteResult {
+        try await asyncWrite { try $0.update(document) }
+    }
+    @discardableResult
+    public func upsert(_ document: Document) async throws(ZvecError) -> DocumentWriteResult {
+        try await asyncWrite { try $0.upsert(document) }
+    }
     public func delete(ids: [String]) async throws(ZvecError) -> WriteSummary {
         try await asyncWrite { try $0.delete(ids: ids) }
     }
     public func deleteWithResults(ids: [String]) async throws(ZvecError) -> [DocumentWriteResult] {
         try await asyncWrite { try $0.deleteWithResults(ids: ids) }
     }
+    @discardableResult
+    public func delete(id: String) async throws(ZvecError) -> DocumentWriteResult {
+        try await asyncWrite { try $0.delete(id: id) }
+    }
     public func delete(where filter: String) async throws(ZvecError) {
         try await asyncWrite { try $0.delete(where: filter) }
     }
     public func fetch(
-        ids: [String], outputFields: [String] = [], includeVector: Bool = false
+        ids: [String], outputFields: [String] = [], includeVector: Bool = true
     ) async throws(ZvecError) -> [Document] {
         try await asyncRead { try $0.fetch(ids: ids, outputFields: outputFields, includeVector: includeVector) }
+    }
+    public func fetch(
+        id: String, outputFields: [String] = [], includeVector: Bool = true
+    ) async throws(ZvecError) -> Document? {
+        try await asyncRead {
+            try $0.fetch(id: id, outputFields: outputFields, includeVector: includeVector)
+        }
+    }
+    public func fetchResults(
+        ids: [String], outputFields: [String] = [], includeVector: Bool = true
+    ) async throws(ZvecError) -> [DocumentFetchResult] {
+        try await asyncRead {
+            try $0.fetchResults(
+                ids: ids, outputFields: outputFields, includeVector: includeVector
+            )
+        }
+    }
+    public func browse(_ query: BrowseQuery = .init()) async throws(ZvecError) -> BrowseResult {
+        try await asyncRead { try $0.browse(query) }
     }
     public func query(_ query: VectorQuery) async throws(ZvecError) -> [Document] {
         try await asyncRead { try $0.query(query) }
@@ -490,6 +571,112 @@ public final class Collection: @unchecked Sendable {
                     message: CAPI.string(result.message) ?? "Document write failed"
                 )
             return DocumentWriteResult(id: ids[index], error: error)
+        }
+    }
+
+    private static func singleResult(
+        _ results: [DocumentWriteResult], operation: String
+    ) throws(ZvecError) -> DocumentWriteResult {
+        guard results.count == 1, let result = results.first else {
+            throw ZvecError(
+                code: .internalError,
+                message: "Native \(operation) returned \(results.count) results for one document"
+            )
+        }
+        return result
+    }
+
+    private func fetchUnlocked(
+        _ handle: OpaquePointer,
+        ids: [String],
+        outputFields: [String],
+        includeVector: Bool
+    ) throws(ZvecError) -> [Document] {
+        try CAPI.typed {
+            guard !ids.isEmpty else { return [] }
+            var documents: UnsafeMutablePointer<OpaquePointer?>?
+            var count = 0
+            try ids.withCStringArray { idPointers in
+                try outputFields.withCStringArray { fields in
+                    try CAPI.check(
+                        zvec_collection_fetch(
+                            handle, idPointers, ids.count,
+                            fields, outputFields.count, includeVector, &documents, &count
+                        ))
+                }
+            }
+            return try Self.decodeDocuments(documents, count: count, schema: cachedSchema)
+        }
+    }
+
+    private func execute(
+        _ query: OpaquePointer, on handle: OpaquePointer
+    ) throws(ZvecError) -> [Document] {
+        var documents: UnsafeMutablePointer<OpaquePointer?>?
+        var count = 0
+        try CAPI.check(zvec_collection_query(handle, query, &documents, &count))
+        return try Self.decodeDocuments(documents, count: count, schema: cachedSchema)
+    }
+
+    private func resolveVectorSource(
+        _ query: VectorQuery, handle: OpaquePointer
+    ) throws(ZvecError) -> VectorQuery {
+        guard case let .documentID(id) = query.source else { return query }
+        guard !id.isEmpty else { throw ZvecError.invalid("Document ID must not be empty") }
+        guard let field = cachedSchema.field(named: query.field) else {
+            throw ZvecError.invalid("Unknown vector field '\(query.field)'")
+        }
+        guard field.dataType.isDenseVector else {
+            throw ZvecError(
+                code: .notSupported,
+                message: "Query by document ID currently requires a dense-vector field"
+            )
+        }
+        let documents: [Document]
+        do {
+            documents = try fetchUnlocked(
+                handle, ids: [id], outputFields: [query.field], includeVector: true
+            )
+        } catch let error {
+            guard field.nullable else { throw error }
+            throw ZvecError(
+                code: .failedPrecondition,
+                message:
+                    "Unable to read vector field '\(query.field)' from document '\(id)': \(error.message)"
+            )
+        }
+        guard let document = documents.first else {
+            throw ZvecError(code: .notFound, message: "Document '\(id)' was not found")
+        }
+        guard let value = document.fields[query.field] else {
+            throw ZvecError(
+                code: .failedPrecondition,
+                message: "Document '\(id)' has no value for vector field '\(query.field)'"
+            )
+        }
+        var resolved = query
+        resolved.source = .vector(try Self.queryVector(from: value, expected: field.dataType))
+        return resolved
+    }
+
+    private static func queryVector(
+        from value: ZvecValue, expected: DataType
+    ) throws(ZvecError) -> DenseQueryVector {
+        switch (expected, value) {
+        case (.vectorBinary32, let .vectorBinary32(value)),
+            (.vectorBinary64, let .vectorBinary64(value)):
+            return .binary(value)
+        case (.vectorFloat16, let .vectorFloat16(value)): return .float16(value)
+        case (.vectorFloat32, let .vectorFloat32(value)): return .float32(value)
+        case (.vectorFloat64, let .vectorFloat64(value)): return .float64(value)
+        case (.vectorInt4, let .vectorInt4(value)): return .int4(value)
+        case (.vectorInt8, let .vectorInt8(value)): return .int8(value)
+        case (.vectorInt16, let .vectorInt16(value)): return .int16(value)
+        default:
+            throw ZvecError(
+                code: .failedPrecondition,
+                message: "Stored vector value does not match schema type \(expected)"
+            )
         }
     }
 

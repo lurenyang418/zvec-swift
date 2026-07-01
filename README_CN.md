@@ -10,6 +10,7 @@
 
 - 以 Swift 值类型和 typed throws 封装完整 Zvec C API。
 - 支持稠密/稀疏向量、标量、数组、全文检索及混合检索。
+- 支持标量 Filter Browse、完整 FTS 表达式以及按已有文档 ID 发起向量查询。
 - Apple 平台支持 HNSW、IVF、Flat、倒排与 FTS 索引。
 - 同时提供同步与 Swift Concurrency API，并安全管理 Collection 生命周期。
 - 通过预编译 `CZvec.xcframework` 由 SwiftPM 分发，使用者无需安装 CMake。
@@ -31,6 +32,7 @@
 
 快速示例和开发命令参见 [英文 README](README.md)，完整设计约束参见 [plan.md](plan.md)，贡献流程参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 DocC API 文档源码位于 [Sources/Zvec/Zvec.docc](Sources/Zvec/Zvec.docc)。
+[Python v0.5.1 能力对齐矩阵](Docs/PythonParity.md) 明确记录底层 C API 与 Apple 平台限制。Python 独有的 embedding provider 和模型运行时不进入通用基础库。
 
 原生构建固定到明确的上游 commit，并包含一个范围受限的
 [C++ 兼容层](Native/README.md)，用于补齐 Zvec v0.5.1 C API 的数组读取与

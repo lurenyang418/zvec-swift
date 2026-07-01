@@ -42,6 +42,7 @@ implementation there. Sparse-vector brute-force queries remain available.
 - ``Collection``
 - ``CollectionOptions``
 - ``CollectionStatistics``
+- ``ZvecRuntime/nativeVersion``
 
 ### Schemas and values
 
@@ -49,6 +50,7 @@ implementation there. Sparse-vector brute-force queries remain available.
 - ``FieldSchema``
 - ``SchemaBuilder``
 - ``Document``
+- ``DocumentFetchResult``
 - ``ZvecValue``
 - ``DataType``
 - ``SparseVector``
@@ -56,7 +58,11 @@ implementation there. Sparse-vector brute-force queries remain available.
 ### Queries
 
 - ``VectorQuery``
+- ``VectorQuerySource``
 - ``FullTextQuery``
+- ``FullTextExpression``
+- ``BrowseQuery``
+- ``BrowseResult``
 - ``GroupByVectorQuery``
 - ``MultiQuery``
 - ``SubQuery``

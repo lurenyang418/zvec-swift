@@ -155,6 +155,60 @@ public struct CollectionSchema: Sendable, Equatable {
     public func field(named name: String) -> FieldSchema? {
         fields.first { $0.name == name }
     }
+
+    public func validate(
+        _ document: Document,
+        for intent: DocumentWriteIntent
+    ) throws(ZvecError) {
+        guard !document.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw .invalid("Document ID must not be empty")
+        }
+        for (name, value) in document.fields {
+            guard let field = field(named: name) else {
+                throw .invalid("Unknown field '\(name)'")
+            }
+            if value == .null {
+                guard field.nullable else {
+                    throw .invalid("Field '\(name)' is not nullable")
+                }
+                continue
+            }
+            guard value.dataType == field.dataType else {
+                throw .invalid(
+                    "Field '\(name)' expects \(field.dataType) but received \(String(describing: value.dataType))"
+                )
+            }
+            try Self.validateDimensions(of: value, for: field)
+        }
+        _ = intent
+    }
+
+    private static func validateDimensions(
+        of value: ZvecValue, for field: FieldSchema
+    ) throws(ZvecError) {
+        let actual: Int?
+        switch value {
+        case let .vectorBinary32(data), let .vectorBinary64(data): actual = data.count * 8
+        case let .vectorFloat16(values): actual = values.count
+        case let .vectorFloat32(values): actual = values.count
+        case let .vectorFloat64(values): actual = values.count
+        case let .vectorInt4(vector): actual = vector.dimensions
+        case let .vectorInt8(values): actual = values.count
+        case let .vectorInt16(values): actual = values.count
+        default: actual = nil
+        }
+        if let actual, actual != field.dimensions {
+            throw .invalid(
+                "Field '\(field.name)' requires \(field.dimensions) dimensions, received \(actual)"
+            )
+        }
+    }
+}
+
+public enum DocumentWriteIntent: Sendable, CaseIterable {
+    case insert
+    case update
+    case upsert
 }
 
 public func Field(

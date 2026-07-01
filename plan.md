@@ -1,5 +1,14 @@
 # Zvec Swift v0.5.1 完整桥接
 
+## 当前状态（2026-07-01）
+
+- 原始 v0.5.1 桥接与后续通用核心能力扩展均已完成实现。
+- 扩展交付包括 Filter Browse、完整 FTS 表达式、按文档 ID 查询、Collection/Runtime introspection、单文档 CRUD、保序 Fetch、DataType 分类和 Schema-aware 校验。
+- Python 核心能力差异记录在 [Docs/PythonParity.md](Docs/PythonParity.md)；Python 独有 embedding 能力明确不进入通用 `Zvec` product。
+- macOS Debug/Release、Thread Sanitizer、iOS device/simulator、DocC warnings-as-errors、示例程序和 API diff 均已验证。
+- 代码完成不等于已发布：Swift 包 `v0.5.1` tag 仍需按发布流程单独创建。
+- 后续实施记录见 [通用核心扩展计划](tmp/zvec-swift-core-extension-plan.md)，独立管理 App 见 [Zvec Studio 计划](tmp/zvec-studio-swift-plan.md)。
+
 ## Summary
 
 - 在空仓库中创建 SwiftPM 包，面向 Swift 6.1、iOS 16+、macOS 13+，支持 Apple ARM64 真机、模拟器和 Apple Silicon Mac。
@@ -11,14 +20,14 @@
 
 - `ZvecRuntime`
   - 同步及异步 `initialize(configuration:)`、`shutdown()`。
-  - `version`、`isInitialized`、`capabilities`。
+  - `version`、结构化 `nativeVersion`、`isInitialized`、`capabilities`。
   - 初始化前校验原生库至少为 0.5.1；全局配置只允许首次初始化时设置，符合上游“一次初始化、不可运行时重配”的要求。[配置文档](https://zvec.org/en/docs/config/)
 - 值类型、全部 `Sendable`：
   - `Configuration`、`LogConfiguration`、`CollectionOptions`。
   - `DataType`、`Metric`、`Quantization`、`IndexConfiguration`。
   - `FieldSchema`、`CollectionSchema`、`CollectionStatistics`。
-  - `Document`、`ZvecValue`、`SparseVector`、`WriteSummary`、`DocumentWriteResult`。
-  - `VectorQuery`、`GroupByVectorQuery`、`FullTextQuery`、`MultiQuery`、`SubQuery`、`Reranker`及各索引查询参数。
+  - `Document`、`DocumentFetchResult`、`ZvecValue`、`SparseVector`、`WriteSummary`、`DocumentWriteResult`。
+  - `BrowseQuery`、`BrowseResult`、`VectorQuery`、`GroupByVectorQuery`、`FullTextQuery`、`FullTextExpression`、`MultiQuery`、`SubQuery`、`Reranker`及各索引查询参数。
 - `ZvecValue` 明确区分：
   - 标量、字符串、`Data`。
   - FP16/FP32/FP64、Int4/Int8/Int16、二进制密集向量。
@@ -28,18 +37,18 @@
 
   ```swift
   let schema = try CollectionSchema("demo") {
-      VectorField("embedding", type: .float32, dimensions: 4,
-                  index: .hnsw(metric: .cosine))
-      Field("title", type: .string,
-            index: .fullText(tokenizer: .standard))
+      try VectorField("embedding", type: .float32, dimensions: 4,
+                      index: .hnsw(metric: .cosine))
+      try Field("title", type: .string,
+                index: .fullText(tokenizer: .standard))
   }
   ```
 
 - `Collection` 为线程安全、RAII 管理的 `final class`：
-  - `create(at:schema:options:)`、`open(at:options:)`、幂等 `close()`。
-  - CRUD、详细逐条写入结果、按过滤器删除、fetch。
+  - `create(at:schema:options:)`、`open(at:options:)`、`location`、`isClosed`、幂等 `close()`。
+  - 单文档及批量 CRUD、详细逐条写入结果、按过滤器删除、fetch 和保序 `fetchResults`。
   - create/drop index、add/drop/alter column、flush、optimize、stats、schema/options 查询。
-  - 普通向量、group-by、FTS、多路 RRF/weighted 查询。
+  - Filter Browse、直接向量/按文档 ID、group-by、两种 FTS 表达式及多路 RRF/weighted 查询。
   - 每项原生数据库操作均提供同名同步和 `async` 重载。
 - 所有高层失败使用 Swift 6 typed throws：`throws(ZvecError)`。
   - 保留原生错误码、消息、源文件、函数及行号。
@@ -77,6 +86,7 @@
 - 编解码单元测试覆盖每种 `ZvecValue`、空值、空数组、UTF-8、嵌入 NUL 的二进制、FP16、Int4 奇偶维度、稀疏索引和值数量不匹配。
 - 集成测试覆盖初始化/关闭、Schema DSL 与普通构造器、创建/重开 collection、全部 CRUD、逐文档错误、filter delete、fetch、flush、optimize、统计和 Schema 演进。
 - 查询测试覆盖 HNSW/IVF/Flat 参数、过滤、输出字段、include-vector、半径搜索、FTS、中文 Jieba、group-by、稠密/稀疏 MultiQuery、RRF 和 weighted rerank。
+- 通用扩展测试覆盖 Browse 上限与非法过滤器、FTS match/query-string、按文档 ID 查询、单文档 CRUD、保序 Fetch、全部 DataType 分类、Schema 校验和 Collection introspection。
 - 生命周期测试覆盖重复 close、关闭后调用、初始化版本不兼容、原生错误详情、临时 C 对象释放以及 Document 序列化/反序列化。
 - 并发压力测试使用 `TaskGroup` 并行查询、写入与 close；运行 Thread Sanitizer 检查 Swift 侧竞态和 use-after-free。
 - XCFramework 验证每个 slice 的架构、平台标记、导出 C 符号、install name、module import、签名兼容性；分别构建并运行 macOS CLI、iOS 模拟器测试 App，并执行 iOS 真机无签名 archive smoke test。

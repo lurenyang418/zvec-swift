@@ -99,13 +99,41 @@ public enum IndexQueryParameters: Sendable, Equatable {
     case vamana(VamanaQueryParameters)
 }
 
+public enum FullTextExpression: Sendable, Equatable, ExpressibleByStringLiteral {
+    case match(String)
+    case query(String)
+
+    public init(stringLiteral value: String) {
+        self = .match(value)
+    }
+}
+
 public struct FullTextQuery: Sendable, Equatable {
     public var field: String
-    public var query: String
+    public var expression: FullTextExpression
     public var topK: Int
     public var filter: String?
+    public var includeVector: Bool
     public var outputFields: [String]
     public var parameters: FullTextQueryParameters
+
+    public init(
+        field: String,
+        expression: FullTextExpression,
+        topK: Int = 10,
+        filter: String? = nil,
+        includeVector: Bool = false,
+        outputFields: [String] = [],
+        parameters: FullTextQueryParameters = .init()
+    ) {
+        self.field = field
+        self.expression = expression
+        self.topK = topK
+        self.filter = filter
+        self.includeVector = includeVector
+        self.outputFields = outputFields
+        self.parameters = parameters
+    }
 
     public init(
         field: String,
@@ -115,18 +143,26 @@ public struct FullTextQuery: Sendable, Equatable {
         outputFields: [String] = [],
         parameters: FullTextQueryParameters = .init()
     ) {
-        self.field = field
-        self.query = query
-        self.topK = topK
-        self.filter = filter
-        self.outputFields = outputFields
-        self.parameters = parameters
+        self.init(
+            field: field,
+            expression: .match(query),
+            topK: topK,
+            filter: filter,
+            includeVector: false,
+            outputFields: outputFields,
+            parameters: parameters
+        )
     }
+}
+
+public enum VectorQuerySource: Sendable, Equatable {
+    case vector(DenseQueryVector)
+    case documentID(String)
 }
 
 public struct VectorQuery: Sendable, Equatable {
     public var field: String
-    public var vector: DenseQueryVector
+    public var source: VectorQuerySource
     public var topK: Int
     public var filter: String?
     public var includeVector: Bool
@@ -143,7 +179,25 @@ public struct VectorQuery: Sendable, Equatable {
         indexParameters: IndexQueryParameters? = nil
     ) {
         self.field = field
-        self.vector = vector
+        self.source = .vector(vector)
+        self.topK = topK
+        self.filter = filter
+        self.includeVector = includeVector
+        self.outputFields = outputFields
+        self.indexParameters = indexParameters
+    }
+
+    public init(
+        field: String,
+        documentID: String,
+        topK: Int,
+        filter: String? = nil,
+        includeVector: Bool = false,
+        outputFields: [String] = [],
+        indexParameters: IndexQueryParameters? = nil
+    ) {
+        self.field = field
+        self.source = .documentID(documentID)
         self.topK = topK
         self.filter = filter
         self.includeVector = includeVector
@@ -174,7 +228,36 @@ public struct GroupByVectorQuery: Sendable, Equatable {
 public enum SubQueryPayload: Sendable, Equatable {
     case dense(DenseQueryVector)
     case sparseFloat32(SparseVector<Float>)
-    case fullText(String)
+    case fullText(FullTextExpression)
+}
+
+public struct BrowseQuery: Sendable, Equatable {
+    public var filter: String?
+    public var limit: Int
+    public var outputFields: [String]
+    public var includeVector: Bool
+
+    public init(
+        filter: String? = nil,
+        limit: Int = 50,
+        outputFields: [String] = [],
+        includeVector: Bool = false
+    ) {
+        self.filter = filter
+        self.limit = limit
+        self.outputFields = outputFields
+        self.includeVector = includeVector
+    }
+}
+
+public struct BrowseResult: Sendable, Equatable {
+    public let documents: [Document]
+    public let limitReached: Bool
+
+    public init(documents: [Document], limitReached: Bool) {
+        self.documents = documents
+        self.limitReached = limitReached
+    }
 }
 
 public struct SubQuery: Sendable, Equatable {

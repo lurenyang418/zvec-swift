@@ -2,6 +2,24 @@ internal import CZvec
 import Foundation
 import os
 
+public struct ZvecVersion: Sendable, Equatable, Hashable, Comparable, CustomStringConvertible {
+    public let major: Int
+    public let minor: Int
+    public let patch: Int
+
+    public init(major: Int, minor: Int, patch: Int) {
+        self.major = major
+        self.minor = minor
+        self.patch = patch
+    }
+
+    public var description: String { "\(major).\(minor).\(patch)" }
+
+    public static func < (lhs: ZvecVersion, rhs: ZvecVersion) -> Bool {
+        (lhs.major, lhs.minor, lhs.patch) < (rhs.major, rhs.minor, rhs.patch)
+    }
+}
+
 public enum ZvecRuntime {
     private struct State: Sendable {
         var initialized = false
@@ -12,6 +30,14 @@ public enum ZvecRuntime {
 
     public static var version: String {
         CAPI.string(zvec_get_version()) ?? "unknown"
+    }
+
+    public static var nativeVersion: ZvecVersion {
+        ZvecVersion(
+            major: Int(zvec_get_version_major()),
+            minor: Int(zvec_get_version_minor()),
+            patch: Int(zvec_get_version_patch())
+        )
     }
 
     public static var isInitialized: Bool {
