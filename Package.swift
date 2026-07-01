@@ -3,7 +3,7 @@
 import Foundation
 import PackageDescription
 
-let nativeVersion = "0.5.2"
+let nativeVersion = "0.5.1"
 let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let localArtifact = "Artifacts/CZvec.xcframework"
 let localArtifactURL = packageDirectory.appending(path: localArtifact, directoryHint: .isDirectory)
