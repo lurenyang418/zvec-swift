@@ -75,10 +75,10 @@
   - 构建 `ios-arm64`、`ios-arm64-simulator`、`macos-arm64` 三个动态 framework slice，统一模块名和 install name 为 `CZvec`。
   - 校正 framework `Info.plist`、module map、`@rpath/CZvec.framework/CZvec`，再用 `xcodebuild -create-xcframework` 合并。
   - Apple 平台保留 HNSW、IVF、Flat、Invert、FTS；公开 Vamana/DiskANN 类型以保持 v0.5.1 API 完整，但在 Apple 上明确抛出 `.notSupported`，因为上游仅在 Linux x86_64 启用 DiskANN。
-- 发布采用两阶段流程，消除 SwiftPM checksum 循环依赖：
-  1. 固定上游 commit 构建并发布 `native-v0.5.1` Release，资产为 `CZvec.xcframework.zip`。
-  2. 计算 `swift package compute-checksum`，写入 `Package.swift`，URL 固定为 `https://github.com/lurenyang418/zvec-swift/releases/download/native-v0.5.1/CZvec.xcframework.zip`。
-  3. 验证远程依赖后发布 Swift 包 tag `v0.5.1`。
+- 发布由单一手动触发的 GitHub Actions 工作流完成，以消除 SwiftPM checksum 循环依赖：
+  1. 固定上游 commit，在 GitHub macOS runner 构建、验证并打包 `CZvec.xcframework.zip`。
+  2. 计算 `swift package compute-checksum`，只回写 `Package.swift` 的 checksum，测试候选产物后将该提交推送到 `main`。
+  3. 发布 `native-v0.5.1` Release 资产，最后在同一 checksum 提交上创建 Swift 包 tag `v0.5.1`。
 - CI 检查 SwiftFormat/SwiftLint 只读模式、Swift 6 严格并发、构建、单元/集成测试、DocC、二进制 ABI 和示例 App。保留 Apache-2.0 LICENSE、NOTICE 及第三方声明。
 
 ## Test Plan
