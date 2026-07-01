@@ -115,7 +115,20 @@ public enum ZvecRuntime {
     }
 
     private static func registerBundledJiebaDictionaryIfPresent() {
-        guard let directory = Bundle.module.url(forResource: "jieba_dict", withExtension: nil),
+        // A signed macOS app may only seal resources below Contents. Prefer the
+        // standard app Resources location; retain Bundle.module for SwiftPM CLI
+        // builds and tests.
+        let resourceBundle: Bundle
+        if let resources = Bundle.main.resourceURL,
+            let bundled = Bundle(
+                url: resources.appending(path: "zvec-swift_Zvec.bundle", directoryHint: .isDirectory)
+            )
+        {
+            resourceBundle = bundled
+        } else {
+            resourceBundle = Bundle.module
+        }
+        guard let directory = resourceBundle.url(forResource: "jieba_dict", withExtension: nil),
             FileManager.default.fileExists(atPath: directory.appending(path: "jieba.dict.utf8").path),
             FileManager.default.fileExists(atPath: directory.appending(path: "hmm_model.utf8").path)
         else { return }
