@@ -11,6 +11,18 @@ Contributions are welcome through [GitHub issues](https://github.com/lurenyang41
 
 The native source is fetched at the exact commit recorded in `scripts/native-version.env`. Do not update the tag without also updating the commit, compatibility check, changelog, binary release, and integration tests.
 
+## Native and package releases
+
+The manually approved **Native release** workflow owns binary production and package publication, following the distribution-repository pattern used by established Swift binary packages:
+
+1. Update `ZVEC_VERSION` and `ZVEC_COMMIT` in `scripts/native-version.env`, plus the matching `nativeVersion` in `Package.swift`, and merge those reviewed source changes to `main`.
+2. Run **Native release** from `main`. The macOS runner builds all Apple slices, verifies and packages the XCFramework, computes the checksum, and changes only the checksum in `Package.swift`.
+3. The workflow tests that release candidate, commits the checksum to `main`, attaches build provenance, publishes `native-vX.Y.Z`, and finally creates the Swift package tag `vX.Y.Z` at the checksum commit.
+
+The workflow has `contents: write` because it pushes the checksum commit and tags. A protected `main` branch must explicitly allow this release workflow to push; otherwise it fails before publishing the release.
+
+For local diagnostics, `scripts/package-native.sh` uses the same metadata-free ZIP command, and `scripts/verify-native-archive.sh` verifies the archive after extraction. Do not upload a locally generated ZIP as the official release asset.
+
 ## Pull requests
 
 - Keep public APIs `Sendable` under Swift 6 strict concurrency.

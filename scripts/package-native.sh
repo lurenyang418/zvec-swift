@@ -7,5 +7,7 @@ ARCHIVE="$ROOT/Artifacts/CZvec.xcframework.zip"
 
 [[ -d "$ARTIFACT" ]] || { echo "run scripts/build-xcframework.sh all first" >&2; exit 1; }
 rm -f "$ARCHIVE"
-ditto -c -k --sequesterRsrc --keepParent "$ARTIFACT" "$ARCHIVE"
+DITTONORSRC=1 ditto -c -k --norsrc --noextattr --noqtn --noacl \
+  --zlibCompressionLevel 9 --keepParent "$ARTIFACT" "$ARCHIVE"
+unzip -tq "$ARCHIVE"
 swift package compute-checksum "$ARCHIVE"

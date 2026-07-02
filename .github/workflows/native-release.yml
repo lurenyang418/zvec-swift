@@ -3,32 +3,101 @@ name: Native release
 on:
   workflow_dispatch:
 
+concurrency:
+  group: native-release
+  cancel-in-progress: false
+
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Read native version
+        id: version
+        shell: bash
+        run: |
+          source scripts/native-version.env
+          grep -q "let nativeVersion = \"$ZVEC_VERSION\"" Package.swift
+          echo "version=$ZVEC_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Require an unpublished native version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "native-v$VERSION" >/dev/null 2>&1; then
+            echo "native-v$VERSION already exists" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION already exists" >&2
+            exit 1
+          fi
       - name: Build all Apple slices
         run: scripts/build-xcframework.sh all
       - name: Verify XCFramework
         run: scripts/verify-xcframework.sh
       - name: Package and checksum
         run: scripts/package-native.sh | tee Artifacts/checksum.txt
+      - name: Verify packaged archive
+        run: scripts/verify-native-archive.sh
+      - name: Update manifest checksum
+        run: |
+          scripts/update-checksum.sh
+          git diff --check
+          CHANGED="$(git diff --name-only)"
+          if [[ -n "$CHANGED" && "$CHANGED" != "Package.swift" ]]; then
+            echo "unexpected tracked changes: $CHANGED" >&2
+            exit 1
+          fi
+      - name: Test release candidate
+        run: |
+          swift test --parallel
+          swift build -c release
+      - name: Commit checksum to main
+        id: commit
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          if ! git diff --quiet -- Package.swift; then
+            git add Package.swift
+            git commit -m "chore: update native checksum for v$VERSION"
+          fi
+          git push origin HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: CZvec-native
+          name: CZvec-native-${{ steps.version.outputs.version }}
           path: |
             Artifacts/CZvec.xcframework.zip
             Artifacts/checksum.txt
-      - name: Publish native-v0.5.1
+      - name: Attest native archive provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: Artifacts/CZvec.xcframework.zip
+      - name: Publish native release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create native-v0.5.1
-          Artifacts/CZvec.xcframework.zip
-          Artifacts/checksum.txt
-          --title "Zvec native v0.5.1"
-          --notes "Prebuilt CZvec XCFramework for macOS arm64, iOS arm64, and iOS Simulator arm64."
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "native-v$VERSION" \
+            Artifacts/CZvec.xcframework.zip \
+            Artifacts/checksum.txt \
+            --target "${{ steps.commit.outputs.sha }}" \
+            --title "Zvec native v$VERSION" \
+            --notes "GitHub Actions-built CZvec XCFramework for macOS arm64, iOS arm64, and iOS Simulator arm64."
+      - name: Publish Swift package tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git tag "v$VERSION" "${{ steps.commit.outputs.sha }}"
+          git push origin "v$VERSION"
